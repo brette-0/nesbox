@@ -1,6 +1,7 @@
 ﻿using EList;
 
 using nesbox.Mappers;
+using nesbox.IO;
 
 namespace nesbox;
 
@@ -16,6 +17,8 @@ namespace nesbox;
 internal static class Implementation {
     internal static void Initialize(EList<string> args) {
         Program.Cartridge = new NROM(ref args);
+        StandardController_NTSCU? Controller1 = null;
+        Link.Subscribe.ControllerToPort(0, ref Controller1);
         while (args.MoveNext()) {
             switch (args.Current) {
                 default:

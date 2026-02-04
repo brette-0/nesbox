@@ -13,6 +13,32 @@ internal static class Link {
         internal static void OnTick(API.IClockDriven ctx) {
             ClockDrivenImplementations.Add(ctx);
         }
+
+        internal static void ControllerToPort<T>(byte port, ref T? device) where T : API.IIO, new() {
+            if (device is not null) {
+                Console.WriteLine("[EMU] [LINK] [IO] Device is already configured and not Subscribable");
+                System.Quit = true;
+                return;
+            }
+            
+            device = new T();
+            device.SetIndex(port);
+
+            switch (port) {
+                case 0:
+                    Program.Controller1 = device;
+                    break;
+                
+                case 1:
+                    Program.Controller2 = device;
+                    break;
+                
+                default:
+                    Console.WriteLine("[EMU] [LINK] [IO] Port is unsupported");
+                    System.Quit = true;
+                    return;
+            }
+        }
 }
 
     /// <summary>

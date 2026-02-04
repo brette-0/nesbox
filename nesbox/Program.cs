@@ -58,6 +58,8 @@ internal static class Program {
     }
 
     internal static API.ICartridge Cartridge;
+    internal static API.IIO?       Controller1;
+    internal static API.IIO?       Controller2;
     
     internal static class Config {
         internal static bool Strict;

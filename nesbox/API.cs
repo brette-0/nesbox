@@ -34,7 +34,12 @@ internal static class API {
     
     internal static void GetProgramROM(string fp, ref byte[] ProgramROM) => GetFile(fp, ref ProgramROM, "Program ROM");
     internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
-    
+
+    internal interface IIO {
+        public void OnWrite();
+        public bool OnRead();
+        public void SetIndex(byte Index);
+    }
 
     internal interface ICartridge {
         /// <summary>
