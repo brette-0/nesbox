@@ -101,6 +101,20 @@ public class NROM : API.ICartridge {
 
     private byte[] __ProgramROM   = [];
     private byte[] __CharacterROM = [];
+
+    #region CPUReadByte
+    private Func<NROM, byte> CPUReadByteTask = (self) => self.StandardProgramCPUReadByte();
+    
+    private byte SmallProgramCPUReadByte() => System.CPU.Address switch {
+        < 0x8000                           => (byte)(System.CPU.Address >> 8),
+        _                                  => ProgramROM[System.CPU.Address & 0x7fff]
+    };
+    
+    private byte StandardProgramCPUReadByte() => System.CPU.Address switch {
+        < 0x8000 => (byte)(System.CPU.Address >> 8),
+        _        => ProgramROM[System.CPU.Address]
+    };
+    #endregion CPUReadByte
     
     private NameTableArrangements NameTableArrangement;
 }
