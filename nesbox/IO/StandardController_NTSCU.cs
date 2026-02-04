@@ -23,8 +23,8 @@ public class StandardController_NTSCU : API.IIO {
         
     }
 
-    public bool OnRead() {
-        var signal = (inputs & 1) is 1;
+    public byte OnRead() {
+        var signal = (byte)(inputs & 1);
         inputs >>= 1;
         shift++;
         return signal;

@@ -39,6 +39,8 @@ internal static class System {
 
         private const ushort OAMDMA           = 0x4014;
         private const ushort CHANNELSTATUS    = 0x4015;
+        private const ushort IODEVICE1        = 0x4016;
+        private const ushort IODEVICE2        = 0x4017;
         private const ushort FRAMECOUNTER     = 0x4017;
 
         
@@ -77,7 +79,8 @@ internal static class System {
                 DMC_LSAMPLE      => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
                 OAMDMA           => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
                 CHANNELSTATUS    => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                FRAMECOUNTER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                IODEVICE1        => Program.Controller1?.OnRead() ?? 0,
+                IODEVICE2        => Program.Controller2?.OnRead() ?? 0,
                 >= 0x4020        => Program.Cartridge.CPUReadByte(),
                 
                 _ => (byte)(CPU.Address >> 8) // open bus
@@ -124,6 +127,10 @@ internal static class System {
                 case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
                 case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case IODEVICE1:
+                    Program.Controller1?.OnWrite();
+                    Program.Controller2?.OnWrite();
+                    break;
                 case FRAMECOUNTER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                     
                 case > 0x4020:

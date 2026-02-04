@@ -37,7 +37,7 @@ internal static class API {
 
     internal interface IIO {
         public void OnWrite();
-        public bool OnRead();
+        public byte OnRead();
         public void SetIndex(byte Index);
     }
 
