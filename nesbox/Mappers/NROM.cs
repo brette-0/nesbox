@@ -1,5 +1,5 @@
 ﻿using EList;
-
+using nesbox;
 namespace nesbox.Mappers;
 
 internal enum NameTableArrangements : byte {
@@ -78,6 +78,8 @@ public class NROM : API.ICartridge {
             Console.WriteLine($"[CART] Character ROM is illegal size");
         }
 
+        if (ProgramROM.Length is 0x4000) CPUReadByteTask = (self) => self.SmallProgramCPUReadByte();
+        
         args = next;
     }
     
@@ -91,8 +93,8 @@ public class NROM : API.ICartridge {
     public void PPUWrite() {
         throw new NotImplementedException();
     }
-    
-    public byte CPUReadByte() => ProgramROM[System.CPU.Address & (ProgramROM.Length is 0x8000 ? 0xffff : 0x7fff)];
+
+    public byte CPUReadByte() => CPUReadByteTask(this);
 
     public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
     public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value ; }

@@ -80,13 +80,60 @@ internal static class System {
                 FRAMECOUNTER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
                 >= 0x4020        => Program.Cartridge.CPUReadByte(),
                 
-                _ => (byte)Random.Shared.Next() // open bus
+                _ => (byte)(CPU.Address >> 8) // open bus
             };
             Program.Cartridge.CPURead();
         }
         
-        internal static byte Write() {
-            throw new NotImplementedException();
+        internal static void Write() {
+            switch (CPU.Address) {
+                case < 0x2000:
+                    SystemRAM[CPU.Address & 0x7fff] = CPU.Data;
+                    break;
+                
+                case < 0x4000:
+                    switch (CPU.Address & 0b0010_0111) {
+                        case PPUCTRL:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
+                        case OAMDATA:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
+                        case PPUSCROLL: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                    }
+                    break;
+                
+                case PULSE1_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE2_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE1_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE2_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE1_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE2_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE1_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case PULSE2_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case TRIANGLE_COUNTER: throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case TRIANGLE_TIMER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case TRIANGLE_LINEAR:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case NOISE_ENVELOPE:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case NOISE_MODE:       throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case NOISE_COUNTER:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case  DMC_MODE:        throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
+                case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case FRAMECOUNTER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                    
+                case > 0x4020:
+                    Program.Cartridge.CPUWrite();
+                    break;
+                
+                default:
+                    // TODO: open bus, nothing to write to "Actually, remember how we write to PPUSTATUS to precharge"
+                    break;
+            }
         }
 
         internal static void Push() {
