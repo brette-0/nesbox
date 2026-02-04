@@ -26,11 +26,9 @@ public class StandardController_NTSCU : API.IIO {
     public byte OnRead() {
         var signal = (byte)(inputs & 1);
         inputs >>= 1;
-        shift++;
         return signal;
     }
 
     private byte index  = 0;
     private byte inputs = 0;
-    private byte shift  = 0;
 }

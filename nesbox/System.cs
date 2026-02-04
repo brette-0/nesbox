@@ -128,6 +128,7 @@ internal static class System {
                 case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case IODEVICE1:
+                    if ((CPU.Data & 1) is 0) break;
                     Program.Controller1?.OnWrite();
                     Program.Controller2?.OnWrite();
                     break;
