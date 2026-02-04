@@ -1,158 +1,243 @@
-﻿namespace nesbox;
+﻿using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using nesbox.CPU;
+using SDL3;
 
-internal class System {
+using static nesbox.CPU.OpCodes;
+
+namespace nesbox;
+
+internal static class System {
     internal static class Memory {
-        internal static byte Read(int offset) {
+        internal static byte Read() => Read(CPU.Address);
+        internal static byte Read(ushort offset) {
             throw new NotImplementedException();
         }
+        
+        internal static byte Write() => Write(CPU.Address, CPU.Data);
+
+        internal static byte Write(ushort offset, byte value) {
+            throw new NotImplementedException();
+        }
+
+        internal static void Push() {
+            ref var s = ref CPU.Register.S;
+            Write((ushort)(0x100 | s), CPU.Data);
+            s--;
+        }
+        
+        internal static void Pull() {
+            ref var s = ref CPU.Register.S;
+            var ctx = Read((ushort)(0x100 | s));
+            s++;
+            CPU.Data = ctx;
+        }
+    }
+
+    internal static void Initialize() {
+        cart = new Implementation();
+        cart.Initialize();
+        CPU.Initialize();
+        PPU.Initialize();
     }
     
-    internal static void Initialize() {
-        var rng = new Random(byte.MaxValue);
+    
+    /// <summary>
+    /// Contains all members that concern PPU
+    /// </summary>
+    private static class PPU {
+        /// <summary>
+        /// Begin PPU Emulation
+        /// </summary>
+        internal static void Initialize() {
+            _thread = new Thread(__Initialize) {
+                IsBackground = false
+            };
+            _thread.Start();
+        }
 
-        CPU.RESET = CPU.Assertion.Asserted;
-        
-        CPU.Register.a.Set((byte)Random.Shared.Next());
-        CPU.Register.x.Set((byte)Random.Shared.Next());
-        CPU.Register.y.Set((byte)Random.Shared.Next());
-        
-        CPU.Reset();
+        private static void __Initialize() {
+            SDL.Init(SDL.InitFlags.Video);
+            
+            _window   = SDL.CreateWindow("PPU OUT", 256, 240, 0);
+
+            if (_window is 0) {
+                Console.WriteLine($"[SDL3] Create Window Failed: {SDL.GetError()}");
+                Quit = true;
+                return;
+            }
+            
+            _renderer = SDL.CreateRenderer(_window, null);
+            if (_renderer is 0) {
+                Console.WriteLine($"[SDL3] Create Renderer Failed: {SDL.GetError()}");
+                Quit = true;
+                return;
+            }
+            
+            if (!(_SDL3VSYNCSupported = SDL.SetRenderVSync(_renderer, 1))) {
+                Console.WriteLine($"[SDL3] VSync not supported: {SDL.GetError()}");
+            }
+            
+            
+            Console.WriteLine("PPU OUT init");
+            Lifetime();
+        }
+
+        private static void Lifetime() {
+            SDL.Event ev;
+            var       running = true;
+            
+            while (running) {
+                while (SDL.PollEvent(out ev)) {
+                    switch ((SDL.EventType)ev.Type) {
+                        case SDL.EventType.Quit:
+                            running = false;
+                            break;
+                    }
+                }
+                
+                SDL.SetRenderDrawColor(_renderer, 0, 0, 0, 255);
+                SDL.RenderClear(_renderer);
+                SDL.RenderPresent(_renderer);
+                
+                if (!_SDL3VSYNCSupported) {
+                    Thread.Sleep(1);
+                }
+            }
+            
+            Console.WriteLine("PPU OUT exit");
+            
+            SDL.DestroyRenderer(_renderer);
+            SDL.DestroyWindow(_window);
+            SDL.Quit();
+            Quit = true;
+        }
+
+        internal static void Present() {
+            
+        }
+
+        private static bool    _SDL3VSYNCSupported;
+        private static nint    _window;
+        private static nint    _renderer;
+        private static Thread? _thread;
+
+        internal const int DOTS_PER_FRAME = 89_342;
     }
     
     internal static class CPU {
-        private static void Lifetime() {
-            loop:
-                SUB = false;
-                SubCycle();
-                SUB = true;
-                SubCycle();
-                goto loop;
-        }   // infinite loop known. Should change in future
+        /// <summary>
+        /// Begin CPU Emulation
+        /// </summary>
+        internal static void Initialize() {
+            Register.AC = (byte)Random.Shared.Next();
+            Register.X  = (byte)Random.Shared.Next();
+            Register.Y  = (byte)Random.Shared.Next();
+
+            var sw = Stopwatch.StartNew();
+
+            const double fps       = 60.0988d;
+            const double frameTime = 1 / fps;
         
-        private static void SubCycle() {
-            foreach (var latch in new ILatchable[] {
-                Register.a, Register.x, Register.y, Register.c,
-                Register.z, Register.i, Register.d, Register.b,
-                Register.v, Register.n, Register.s,
-                Register.IR, Register.PCL, Register.PCH}) {
-                latch.DeassertLatch();
-            }
+            var nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
+        
+            while (!Quit) {
+                Link.TriggerClockDrivenImplementations();
+                // PPU step dot
+                if (virtualTime % 3 is 0) {
+                    Step();
+                    // APU step cycle
+                }
+
+                if (_throttle) {
+                    // only present video when throttling
+                    // TODO: On init disable throttle, show UI "Throttling"
+                    //       this will indicate user should use breakpoints or lua
+                    if (virtualTime % PPU.DOTS_PER_FRAME is 0) {
+                        PPU.Present();
+                    
+                        var now       = sw.Elapsed.TotalSeconds;
+                        var remaining = nextFrameDeadLine - now;
+
+                        if (remaining < 0) {
+                            Console.WriteLine("[CPU] Unable to compute in time");
+                            Quit = true;
+                            return;
+                        }
+                    
+                        Thread.Sleep(TimeSpan.FromSeconds(remaining));
+                        nextFrameDeadLine += frameTime;
+                    }
+                } else {
+                    nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
+                }
             
-            switch (RESET, T, SUB) {
-                case (Assertion.Asserted, 0, false):
-                    RW           = ReadWrite.Read;
-                    PHI1         = Assertion.Asserted;
-                    PHI2         = Assertion.Deasserted;
-
-                    Register.IR.AssertLatch();
-                    Register.IR.Set(0);
-
-                    Register.c.AssertLatch();
-                    Register.z.AssertLatch();
-                    Register.i.AssertLatch();
-                    Register.b.AssertLatch();
-                    Register.d.AssertLatch();
-                    Register.v.AssertLatch();
-                    Register.n.AssertLatch();
-                    
-                    Register.p = 0x34;
-                    
-                    Register.s.AssertLatch();
-                    Register.s.Set(0xfd);
-                    break;
-                
-                case (Assertion.Asserted, 1, false):
-                    Address = Vectors.Reset;
-                    break;
-                
-                case (Assertion.Asserted, 1, true):
-                    Register.PCL.AssertLatch();
-                    Register.PCL.Set(Memory.Read(Address));
-                    break;
-                
-                case (Assertion.Asserted, 2, false):
-                    Address = Vectors.Reset + 1;
-                    break;
-                
-                case (Assertion.Asserted, 2, true):
-                    Register.PCH.AssertLatch();
-                    Register.PCH.Set(Memory.Read(Address));
-                    break;
-                
-                
-                default:
-                    break;
+                ++virtualTime;
             }
         }
 
-        internal static void Reset() {
-            thread = new(Lifetime);
-            thread.Start();
+        private static void Step() {
+            if (cycle is 0) {
+                Register.IR = Memory.Read(PC);
+                PC++;
+                OpHandle    = GetOpcodeSolver(Register.IR);
+                return;
+            }
+
+            OpHandle();
+            cycle++;
+        }
+
+
+        private static  Action OpHandle;
+        internal static byte   cycle;
+
+        internal static ushort Address;
+        internal static byte   Data;
+        internal static byte   DB;
+        internal static byte   PCL;
+        internal static byte   PCH;
+        internal static byte   ADL;
+        internal static byte   ADH;
+
+        internal static ushort AD {
+            get => (ushort)((ADH << 8) | ADL);
+            set {
+                ADH = (byte)(value >> 8);
+                ADL = (byte)(value & 0xff);
+            }
         }
         
+        internal static ushort PC {
+            get => (ushort)((PCH << 8) | PCL);
+            set {
+                PCH = (byte)(value >> 8);
+                PCL = (byte)(value & 0xff);
+            }
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void DriveAddressPins()
+        {
+            Address = (ushort)((ADH << 8) | ADL);
+        }
         
         internal static class Register {
             // Registers
-            internal static LatchedRegister<byte> a = new();
-            internal static LatchedRegister<byte> x = new();
-            internal static LatchedRegister<byte> y = new();
-
-            internal static byte p {
-                get {
-                    byte _p = 0;
-                    foreach (var lp in new[] {c, z, i, d, b, v, n}) {
-                        var read = lp.Get();
-                        
-                        _p <<= 1;
-                        _p |= (byte)(read is Assertion.Deasserted ? 0 : 1);
-                    }
-
-                    return (byte)((_p << 1) & ~0b11 | 0b100 & (_p & 0b11));
-                }
-
-                set {
-                    n.Set((Assertion)((value >> 7) & 1));
-                    v.Set((Assertion)((value >> 6) & 1));
-                    b.Set((Assertion)((value >> 5) & 1));
-                    d.Set((Assertion)((value >> 4) & 1));
-                    i.Set((Assertion)((value >> 2) & 1));
-                    z.Set((Assertion)((value >> 1) & 1));
-                    c.Set((Assertion)((value >> 0) & 1));
-                }
-            }
-
-            internal static LatchedRegister<byte> s = new();
+            internal static byte IR = 0x00; // instruction register (stores the current operation code)
+            internal static byte X  = 0x00;
+            internal static byte Y  = 0x00; // index registers
+            internal static byte S  = 0x00; // stack pointer
+            internal static byte AC = 0x00; // accumulator
             
-            internal static LatchedRegister<byte> PCL = new();
-            internal static LatchedRegister<byte> PCH = new();
-            internal static LatchedRegister<byte> IR  = new();
-
-            // Register latches
-            internal static Assertion LA   { get => a.latch; }
-            internal static Assertion LX   { get => x.latch; }
-            internal static Assertion LY   { get => y.latch; }
-            internal static Assertion LS   { get => s.latch; }
-            internal static Assertion LPCL { get => PCL.latch; }
-            internal static Assertion LPCH { get => PCH.latch; }
-            internal static Assertion LIR  { get => IR.latch; }
-            
-            // Flag latches
-            internal static Assertion LC { get => c.latch; }
-            internal static Assertion LZ { get => z.latch; }
-            internal static Assertion LI { get => i.latch; }
-            internal static Assertion LD { get => d.latch; }
-            internal static Assertion LB { get => b.latch; }
-            internal static Assertion LV { get => v.latch; }
-            internal static Assertion LN { get => n.latch; }
-
             // flags
-            internal static LatchedPin c = new();
-            internal static LatchedPin z = new();
-            internal static LatchedPin i = new();
-            internal static LatchedPin d = new();
-            internal static LatchedPin b = new();
-            internal static LatchedPin v = new();
-            internal static LatchedPin n = new();
+            internal static bool c = false;
+            internal static bool z = false;
+            internal static bool i = false;
+            internal static bool d = false;
+            internal static bool b = false;
+            internal static bool v = false;
+            internal static bool n = false;
         }
 
         internal static class Vectors {
@@ -162,106 +247,12 @@ internal class System {
         }
 
         private const ulong BaseClockSpeed = 1_789_773ul;
-        
-        private static Thread thread;
-        
-        internal static class Helper {
-            internal static ushort PC { get => (ushort)((Register.PCH.Get() << 8) | Register.PCL.Get()); }
-
-            internal static class PHI {
-                internal static void   Flip() => (PHI1, PHI2) = (PHI2, PHI1);
-                internal static States Current = (States)(((byte)PHI1 + 2 * (byte)PHI2) % 3);
-                
-                internal enum States {Error, PHI1, PHI2}
-            }
-            
-            internal static byte p {
-                get {
-                    byte _p = 0;
-                    foreach (var lp in new[] {Register.c, Register.z, Register.i, Register.d, Register.b, Register.v, Register.n}) {
-                        var read = lp.Get(true);
-                        
-                        _p <<= 1;
-                        _p |=  (byte)(read is Assertion.Deasserted ? 0 : 1);
-                    }
-
-                    return (byte)((_p << 1) & ~0b11 | 0b100 & (_p & 0b11));
-                }
-
-                set {
-                    Register.n.Set((Assertion)((value >> 7) & 1), true);
-                    Register.v.Set((Assertion)((value >> 6) & 1), true);
-                    Register.b.Set((Assertion)((value >> 5) & 1), true);
-                    Register.d.Set((Assertion)((value >> 4) & 1), true);
-                    Register.i.Set((Assertion)((value >> 2) & 1), true);
-                    Register.z.Set((Assertion)((value >> 1) & 1), true);
-                    Register.c.Set((Assertion)((value >> 0) & 1), true);
-                }
-            }
-        }
-        
-        internal static byte T   = 0;
-        internal static bool SUB = false;
-        
-        
-        #region PINS
-
-        internal static Assertion RESET = Assertion.Deasserted;
-        internal static ReadWrite RW    = ReadWrite.Read;
-        internal static Assertion PHI1  = Assertion.Deasserted;
-        internal static Assertion PHI2  = Assertion.Deasserted;
-
-        internal class LatchedPin : ILatchable {
-            internal Assertion Get(bool nocheck = false) => nocheck || latch is Assertion.Asserted 
-                ? pin 
-                : throw new Exception("pin is latched!");
-
-            internal void Set(Assertion assert, bool nocheck = false) => pin = nocheck || latch is Assertion.Asserted
-                ? assert
-                : throw new Exception("pin is latched!");
-            
-            public void AssertLatch()   => latch = Assertion.Asserted;
-            public void DeassertLatch() => latch = Assertion.Deasserted;
-
-            internal Assertion pin   { get; private set; }
-            internal Assertion latch { get; private set; }
-        }
-
-        internal class LatchedRegister<T> : ILatchable where T : IComparable {
-            internal LatchedRegister() {
-                var t = typeof(T);
-                if (t == typeof(uint) || t == typeof(ulong) || t == typeof(byte))
-                    value = (T)(object)Random.Shared.Next();
-                else throw new NotSupportedException($"{t.FullName} is not supported");
-            }
-            
-            internal T Get(bool nocheck = false) => nocheck || latch is Assertion.Asserted 
-                ? value 
-                : (T)(object)Random.Shared.Next();
-            
-            internal void Set(T ctx, bool nocheck = false) => value = nocheck || latch is Assertion.Asserted 
-                ? ctx 
-                : (T)(object)Random.Shared.Next();
-
-
-            internal Assertion latch { get; private set; }
-            internal T         value { get; private set; }
-            
-            public void AssertLatch()   => latch = Assertion.Asserted;
-            public void DeassertLatch() => latch = Assertion.Deasserted;
-        }
-        
-        private interface ILatchable {
-            void AssertLatch();
-            void DeassertLatch();
-        }
-
-        internal enum ReadWrite : byte { Read, Write }
-        internal enum Assertion : byte { Deasserted, Asserted}
-        #endregion
-        
-        #region BUS
-        internal static ushort Address = 0;
-        #endregion
     }
+    
+    private static Implementation cart;
+
+    private  const  double SECONDS_PER_FRAME = 0d;
+    private  static bool  _throttle          = false;
+    internal static ulong virtualTime        = 0;
+    internal static bool  Quit               = false;
 }
