@@ -1,22 +1,27 @@
-﻿namespace nesbox;
+﻿using EList;
+
+using nesbox.Mappers;
+
+namespace nesbox;
 
 /*
- *  Hello user!
- *  For nesbox to use your cartridge, you must this file as on start it waits for cartridge to initialise
- *  SDL3 won't be running yet so it can take as long as you like, freezes or hangs shouldn't be my fault.
- *  If you like, you can rename 'Implementation' to anything, depending on your project.
- *  Thanks for choosing nesbox!
+ *  Hello user, thanks for choosing nesbox!
+ *  You decide what hardware exists and how it works by programming it.
+ *  All nesbox does is provide an API for its working emulator and offer a debug suite.
+ *
+ *  For more information on how to get started visit https://www.website.com!
  */
 
 
-public class Implementation : API.ICartridge {
-    public void Initialize() { }
-
-    public void ReadMemory() {
-            
-    }
-        
-    public void WriteMemory() {
-            
+internal static class Implementation {
+    internal static void Initialize(EList<string> args) {
+        Program.Cartridge = new NROM(ref args);
+        while (args.MoveNext()) {
+            switch (args.Current) {
+                default:
+                    Console.WriteLine($"[CART] Unexpected Argument {args.Current}");
+                    break;
+            }
+        }
     }
 }

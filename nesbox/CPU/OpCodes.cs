@@ -13,7 +13,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC++;
                         break;
@@ -49,7 +49,7 @@ internal static class OpCodes {
                         ADL = 0xFE;
                         ADH = 0xFF;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         DB = Data;
                         break;
@@ -58,7 +58,7 @@ internal static class OpCodes {
                         ADL = 0xFF;
                         ADH = 0xFF;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC    = (ushort)((Data << 8) | DB);
                         cycle = 0;
@@ -113,7 +113,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         DB = Data;
                         PC++;
@@ -123,7 +123,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         break;
                     
                     case 3:
@@ -140,7 +140,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC    = (ushort)((Data << 8) | DB);
                         cycle = 0;
@@ -196,7 +196,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         break;
                     
                     case 2:
@@ -204,7 +204,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         
                         var p = Data;
 
@@ -225,7 +225,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         DB = Data;
                         break;
@@ -235,7 +235,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC = (ushort)((Data << 8) | DB);
                         break;
@@ -244,7 +244,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         
                         cycle = 0;
                         break;
@@ -272,7 +272,7 @@ internal static class OpCodes {
                         ADL = PCL;
                         ADH = PCH;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         ADL = Data;
                         PC++;
@@ -282,7 +282,7 @@ internal static class OpCodes {
                         ADL = PCL;
                         ADH = PCH;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC = (ushort)((Data << 8) | ADL);
 
@@ -327,7 +327,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         break;
                     
                     case 2:
@@ -335,7 +335,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         DB = Data;
                         break;
@@ -345,7 +345,7 @@ internal static class OpCodes {
                         ADL = Register.S;
                         ADH = 0x01;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC = (ushort)((Data << 8) | DB);
                         break;
@@ -358,7 +358,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
                         cycle = 0;
                         break;
                     
@@ -385,7 +385,7 @@ internal static class OpCodes {
                         ADL = (byte)(PC & 0xFF);
                         ADH = (byte)(PC >> 8);
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         ADL = Data;
                         PC++;
@@ -400,7 +400,7 @@ internal static class OpCodes {
                         ADL = PCL;
                         ADH = PCH;
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         ADL =  ptrLow;
                         ADH = Data;
@@ -410,7 +410,7 @@ internal static class OpCodes {
                     
                     case 3:
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         DB = Data;
                         break;
@@ -419,7 +419,7 @@ internal static class OpCodes {
                         ADL = (byte)(ADL + 1);
                        
                         DriveAddressPins();
-                        Data = Memory.Read(Address);
+                        Memory.Read();
 
                         PC    = (ushort)((Data << 8) | DB);
                         cycle = 0;
@@ -627,7 +627,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     DB = Data;
                     PC++;
@@ -640,7 +640,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     break;
                 
                 case 3:
@@ -651,7 +651,7 @@ internal static class OpCodes {
                     ADH = PCH;
 
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     PC = (ushort)((PC & 0xFF00) | ADL);
 
@@ -661,7 +661,7 @@ internal static class OpCodes {
                 case 4:
                     ADH++;
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     PC    = (ushort)((ADH << 8) | ADL);
                     cycle = 0;
@@ -693,23 +693,28 @@ internal static class OpCodes {
         }
 
         private static void DEC() {
-            Memory.Write(Address, (byte)(Data - 1));
+            Data--;
+            Memory.Write();
         }
 
         private static void INC() {
-            Memory.Write(Address, (byte)(Data + 1));
+            Data++;
+            Memory.Write();
         }
 
         private static void STA() {
-            Memory.Write(Address, Register.AC);
+            Data = Register.AC;
+            Memory.Write();
         }
 
         private static void STX() {
-            Memory.Write(Address, Register.X);
+            Data = Register.X;
+            Memory.Write();
         }
 
         private static void STY() {
-            Memory.Write(Address, Register.Y);
+            Data = Register.Y;
+            Memory.Write();
         }
 
         private static void SLO() {
@@ -733,7 +738,8 @@ internal static class OpCodes {
         }
 
         private static void SAX() {
-            Memory.Write(Address, (byte)(Register.AC & Register.X));
+            Data = (byte)(Register.AC & Register.X);
+            Memory.Write();
         }
 
         private static void DCP() {
@@ -747,20 +753,24 @@ internal static class OpCodes {
         }
 
         private static void SHA() {
-            Memory.Write(Address, (byte)(Register.AC & Register.X & (1 + (Address >> 8))));
+            Data = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
+            Memory.Write();
         }
 
         private static void SHX() {
-            Memory.Write(Address, (byte)(Register.X & (1 + (Address >> 8))));
+            Data = (byte)(Register.X & (1 + (Address >> 8)));
+            Memory.Write();
         }
         
         private static void SHY() {
-            Memory.Write(Address, (byte)(Register.Y & (1 + (Address >> 8)))); 
+            Data = (byte)(Register.Y & (1 + (Address >> 8)));
+            Memory.Write(); 
         }
 
         private static void TAS() {
+            Data       = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
             Register.S = (byte)(Register.AC & Register.X);
-            Memory.Write(Address, (byte)(Register.AC & Register.X & (1 + (Address >> 8))));
+            Memory.Write();
         }
 
         private static void ADC() {
@@ -858,7 +868,7 @@ internal static class OpCodes {
             Data       = (byte)((Register.c ? 0x80 : 0x00) | (Data >> 1));
             Register.c = c is 1;
             NonArithmeticProcessorFlagSets(Data);
-            Memory.Write(Address, Data);
+            Memory.Write();
         }
         
         private static void ROL() {
@@ -866,21 +876,21 @@ internal static class OpCodes {
             Data       = (byte)((Register.c ? 1 : 0) | (Data << 1));
             Register.c = c is 1;
             NonArithmeticProcessorFlagSets(Data);
-            Memory.Write(Address, Data);
+            Memory.Write();
         }
 
         private static void LSR() {
             Register.c =   (Data & 1) is 1;
             Data       >>= 1;
             NonArithmeticProcessorFlagSets(Data);
-            Memory.Write(Address, Data);
+            Memory.Write();
         }
         
         private static void ASL() {
             Register.c =   (Data & 0x80) is 0x80;
             Data       <<= 1;
             NonArithmeticProcessorFlagSets(Data);
-            Memory.Write(Address, Data);
+            Memory.Write();
         }
         
         private static void ORA() {
@@ -929,7 +939,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     ADL  = Data;
                     PC++;
@@ -939,7 +949,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     ADH  = Data;
                     PC++;
@@ -950,7 +960,7 @@ internal static class OpCodes {
                     ADL  = (byte)sum;
                     
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     if (sum < 0x100) {
                         ctx();
@@ -961,7 +971,7 @@ internal static class OpCodes {
                 case 4:
                     ADH++;
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     ctx();
                     cycle = 0;
@@ -980,7 +990,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     DB   = Data;
                     PC++;
@@ -990,7 +1000,7 @@ internal static class OpCodes {
                     ADL  = DB;
                     ADH  = 0x00;
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
 
                     ADL = (byte)(DB + reg);
@@ -1009,7 +1019,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     ADL  = Data;
                     PC++;
@@ -1019,7 +1029,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     ADH  = Data;
                     PC++;
@@ -1027,7 +1037,7 @@ internal static class OpCodes {
                 
                 case 3:
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     ctx();
                     cycle = 0;
@@ -1046,7 +1056,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     DB   = Data;
                     PC++;
@@ -1074,7 +1084,7 @@ internal static class OpCodes {
                     ADH = (byte)(PC >> 8);
 
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     PC++;
                     ctx();
                     cycle = 0;
@@ -1093,7 +1103,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     DB   = Data;      
                     PC++;
@@ -1104,7 +1114,7 @@ internal static class OpCodes {
                     ADH = 0x00;
 
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     break;
 
                 case 3:
@@ -1112,7 +1122,7 @@ internal static class OpCodes {
                     ADH = 0x00;
 
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     ADH  = Data;
                     break;
 
@@ -1121,7 +1131,7 @@ internal static class OpCodes {
                     ADL         = (byte)sum;
 
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     if (sum <= 0xFF) {
                         ctx();
@@ -1133,7 +1143,7 @@ internal static class OpCodes {
                 case 5:
                     ADH++;
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     ctx();
                     cycle = 0;
                     break;
@@ -1151,7 +1161,7 @@ internal static class OpCodes {
                     ADL = (byte)(PC & 0xFF);
                     ADH = (byte)(PC >> 8);
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     
                     DB   = Data;
                     PC++;
@@ -1162,7 +1172,7 @@ internal static class OpCodes {
                     ADH = 0x00;
                     
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
                     break;
                     
                 case 3:
@@ -1170,7 +1180,7 @@ internal static class OpCodes {
                     ADH  = 0x00;
                     
                     DriveAddressPins();
-                    Data = Memory.Read(Address);ADL  = Data;
+                    Memory.Read();ADL  = Data;
                     ADL  = Data;
                     break;
                     
@@ -1178,14 +1188,14 @@ internal static class OpCodes {
                     ADL  = (byte)(DB + Register.X + 1);
                     ADH  = 0x00;
                     DriveAddressPins();
-                    Data = Memory.Read(Address);
+                    Memory.Read();
 
                     ADH  = Data;
                     break;
                     
                 case 5:
                     DriveAddressPins();
-                    Data  = Memory.Read(Address);
+                    Memory.Read();
                     ctx();
                     cycle = 0;
                     break;

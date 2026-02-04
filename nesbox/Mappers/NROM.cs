@@ -1,0 +1,104 @@
+﻿using EList;
+
+namespace nesbox.Mappers;
+
+internal enum NameTableArrangements : byte {
+    Vertical,
+    Horizontal
+}
+
+public class NROM : API.ICartridge {
+    public NROM(ref EList<string> args) {
+        var next = new EList<string>();
+
+        while (args.MoveNext()) {
+            switch (args.Current) {
+                case "--program":
+                    if (!args.MoveNext()) {
+                        Console.WriteLine("[CART] No Program ROM file path specified");
+                        System.Quit = true;
+                        return;
+                    }
+                    
+                    API.GetProgramROM(args.Current, ref __ProgramROM);
+                    if (ProgramROM.Length is 0) {
+                        System.Quit = true;
+                        return;
+                    }
+                    break;
+                
+                case "--character":
+                    if (!args.MoveNext()) {
+                        Console.WriteLine("[CART] No Character ROM file path specified");
+                        System.Quit = true;
+                        return;
+                    }
+                    
+                    API.GetCharacterROM(args.Current, ref __CharacterROM);
+                    if (CharacterROM.Length is 0) {
+                        System.Quit = true;
+                        return;
+                    }
+                    break;
+                
+                case "--vertical":
+                    NameTableArrangement = NameTableArrangements.Vertical;
+                    break;
+                
+                case "--horizontal":
+                    NameTableArrangement = NameTableArrangements.Horizontal;
+                    break;
+                
+                default:
+                    next.Add(args.Current);
+                    break;
+            }
+        }
+
+        if (__ProgramROM.Length is 0) {
+            Console.WriteLine("[CART] No Program ROM file path specified");
+            System.Quit = true;
+            return;
+        }
+        
+        
+        if (ProgramROM.Length > 0x8000) {
+            Console.WriteLine($"[CART] Program ROM is too large");
+        }
+
+        if ((ProgramROM.Length & ~0xc000) != ProgramROM.Length) {
+            Console.WriteLine($"[CART] Program ROM is illegal size");
+        }
+
+        if (CharacterROM.Length > 0x2000) {
+            Console.WriteLine($"[CART] Character ROM is too large");
+        }
+
+        if ((CharacterROM.Length & ~0x2000) != ProgramROM.Length) {
+            Console.WriteLine($"[CART] Character ROM is illegal size");
+        }
+
+        args = next;
+    }
+    
+    // NROM does not watch reads or writes or with intent or event
+    public void CPURead() { }
+    public void CPUWrite() { }
+    
+    public void PPURead() {
+        throw new NotImplementedException();
+    }
+    public void PPUWrite() {
+        throw new NotImplementedException();
+    }
+    
+    public byte CPUReadByte() => ProgramROM[System.CPU.Address & (ProgramROM.Length is 0x8000 ? 0xffff : 0x7fff)];
+
+    public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
+    public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value ; }
+
+    private byte[] __ProgramROM   = [];
+    private byte[] __CharacterROM = [];
+    
+    private NameTableArrangements NameTableArrangement;
+}

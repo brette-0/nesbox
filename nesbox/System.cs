@@ -9,34 +9,109 @@ namespace nesbox;
 
 internal static class System {
     internal static class Memory {
-        internal static byte Read() => Read(CPU.Address);
-        internal static byte Read(ushort offset) {
-            throw new NotImplementedException();
+        private const ushort PPUCTRL   = 0x2000;
+        private const ushort PPUMASK   = 0x2001;
+        private const ushort PPUSTATUS = 0x2002;
+        private const ushort OAMADDR   = 0x2003;
+        private const ushort OAMDATA   = 0x2004;
+        private const ushort PPUSCROLL = 0x2005;
+        private const ushort PPUADDR   = 0x2006;
+        private const ushort PPUDATA   = 0x2007;
+
+        private const ushort PULSE1_ENVELOPE  = 0x4000;
+        private const ushort PULSE1_SWEEP     = 0x4001;
+        private const ushort PULSE1_TIMER     = 0x4002;
+        private const ushort PULSE1_COUNTER   = 0x4003;
+        private const ushort PULSE2_ENVELOPE  = 0x4004;
+        private const ushort PULSE2_SWEEP     = 0x4005;
+        private const ushort PULSE2_TIMER     = 0x4006;
+        private const ushort PULSE2_COUNTER   = 0x4007;
+        private const ushort TRIANGLE_COUNTER = 0x4008;
+        private const ushort TRIANGLE_TIMER   = 0x400a;
+        private const ushort TRIANGLE_LINEAR  = 0x400b;
+        private const ushort NOISE_ENVELOPE   = 0x400c;
+        private const ushort NOISE_MODE       = 0x400e;
+        private const ushort NOISE_COUNTER    = 0x400f;
+        private const ushort DMC_MODE         = 0x4010;
+        private const ushort DMC_LOAD         = 0x4011;
+        private const ushort DMC_ASAMPLE      = 0x4012;
+        private const ushort DMC_LSAMPLE      = 0x4013;
+
+        private const ushort OAMDMA           = 0x4014;
+        private const ushort CHANNELSTATUS    = 0x4015;
+        private const ushort FRAMECOUNTER     = 0x4017;
+
+        
+        
+        internal static void Read() {
+            CPU.Data = CPU.Address switch {
+                < 0x2000 => SystemRAM[CPU.Address & 0x7ff],
+                < 0x4000 => (CPU.Address & 0b0010_0111) switch {
+                    PPUCTRL   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                    PPUMASK   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                    PPUSTATUS => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                    OAMADDR   => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
+                    OAMDATA   => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
+                    PPUSCROLL => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                    PPUADDR   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                    PPUDATA   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
+                },
+                
+                PULSE1_ENVELOPE  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE2_ENVELOPE  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE1_COUNTER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE2_COUNTER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE1_SWEEP     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE2_SWEEP     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE1_TIMER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                PULSE2_TIMER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                TRIANGLE_COUNTER => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                TRIANGLE_TIMER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                TRIANGLE_LINEAR  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                NOISE_ENVELOPE   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                NOISE_MODE       => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                NOISE_COUNTER    => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                DMC_MODE         => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                DMC_LOAD         => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                DMC_ASAMPLE      => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                DMC_LSAMPLE      => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
+                OAMDMA           => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                CHANNELSTATUS    => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                FRAMECOUNTER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
+                >= 0x4020        => Program.Cartridge.CPUReadByte(),
+                
+                _ => (byte)Random.Shared.Next() // open bus
+            };
+            Program.Cartridge.CPURead();
         }
         
-        internal static byte Write() => Write(CPU.Address, CPU.Data);
-
-        internal static byte Write(ushort offset, byte value) {
+        internal static byte Write() {
             throw new NotImplementedException();
         }
 
         internal static void Push() {
             ref var s = ref CPU.Register.S;
-            Write((ushort)(0x100 | s), CPU.Data);
+            CPU.ADL = s;
+            CPU.ADH = 0x01;
+            CPU.DriveAddressPins();
+            Write();
             s--;
         }
         
         internal static void Pull() {
             ref var s = ref CPU.Register.S;
-            var ctx = Read((ushort)(0x100 | s));
-            s++;
-            CPU.Data = ctx;
+            CPU.ADL = s;
+            CPU.ADH = 0x01;
+            CPU.DriveAddressPins();
+            
+            Read();
+            s++;;
         }
+
+        private static byte[] SystemRAM = new byte[0x800];
     }
 
     internal static void Initialize() {
-        cart = new Implementation();
-        cart.Initialize();
         CPU.Initialize();
         PPU.Initialize();
     }
@@ -149,24 +224,30 @@ internal static class System {
                     // APU step cycle
                 }
 
-                if (_throttle) {
+                if (_throttle is not 0f) {
                     // only present video when throttling
                     // TODO: On init disable throttle, show UI "Throttling"
                     //       this will indicate user should use breakpoints or lua
                     if (virtualTime % PPU.DOTS_PER_FRAME is 0) {
                         PPU.Present();
                     
-                        var now       = sw.Elapsed.TotalSeconds;
-                        var remaining = nextFrameDeadLine - now;
+                        var effectiveFrameTime = frameTime / _throttle;
+                        var now                = sw.Elapsed.TotalSeconds;
+                        var remaining          = nextFrameDeadLine - now;
 
                         if (remaining < 0) {
-                            Console.WriteLine("[CPU] Unable to compute in time");
-                            Quit = true;
-                            return;
+                            if (Program.Config.Strict) {
+                                Console.WriteLine("[CPU] Unable to compute in time");
+                                Quit = true;
+                                return;  
+                            } 
+                            
+                            Console.WriteLine($"[CPU] Program is running behind schedule {MathF.Abs((float)remaining)}s");
+                            remaining = 0;
                         }
                     
                         Thread.Sleep(TimeSpan.FromSeconds(remaining));
-                        nextFrameDeadLine += frameTime;
+                        nextFrameDeadLine += effectiveFrameTime;
                     }
                 } else {
                     nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
@@ -178,7 +259,10 @@ internal static class System {
 
         private static void Step() {
             if (cycle is 0) {
-                Register.IR = Memory.Read(PC);
+                AD          = PC;
+                DriveAddressPins();
+                
+                Memory.Read();
                 PC++;
                 OpHandle    = GetOpcodeSolver(Register.IR);
                 return;
@@ -248,11 +332,9 @@ internal static class System {
 
         private const ulong BaseClockSpeed = 1_789_773ul;
     }
-    
-    private static Implementation cart;
 
     private  const  double SECONDS_PER_FRAME = 0d;
-    private  static bool  _throttle          = false;
+    private  static float  _throttle         = 0f;
     internal static ulong virtualTime        = 0;
     internal static bool  Quit               = false;
 }

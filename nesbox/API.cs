@@ -1,4 +1,8 @@
-﻿namespace nesbox;
+﻿using System.Diagnostics.Contracts;
+
+namespace nesbox;
+
+using EList;
 
 /// <summary>
 /// Contains all methods that may interface components designed by user with the emulator
@@ -12,21 +16,55 @@ internal static class API {
         void OnTick();
     }
 
+    private static void GetFile(string fp, ref byte[] fileObject, string taskName) {
+        try {
+            fileObject   = File.ReadAllBytes(fp);;
+        } catch (Exception e) {
+            switch (e) {
+                case FileNotFoundException:
+                    Console.WriteLine($"[EMU] File for {taskName} not found");
+                    break;
+                
+                default:
+                    Console.WriteLine("[EMU] Unknown File IO error");
+                    break;
+            }
+        }
+    }
+    
+    internal static void GetProgramROM(string fp, ref byte[] ProgramROM) => GetFile(fp, ref ProgramROM, "Program ROM");
+    internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
+    
+
     internal interface ICartridge {
-        
         /// <summary>
-        /// Invoked on emulator load
+        /// Expects information from CPU Address, is contextualized as a read
         /// </summary>
-        public void Initialize();
-        
-        /// <summary>
-        /// Expects information from Address, is contextualized as a read
-        /// </summary>
-        public void ReadMemory();
+        public void CPURead();
 
         /// <summary>
-        /// Expects information from Address, is contextualized as a write
+        /// Expects information from CPU Address, is contextualized as a write
         /// </summary>
-        public void WriteMemory();
+        public void CPUWrite();
+        
+        /// <summary>
+        /// Expects information from PPU Address, is contextualized as a read
+        /// </summary>
+        public void PPURead();
+
+        /// <summary>
+        /// Expects information from PPU Address, is contextualized as a write
+        /// </summary>
+        public void PPUWrite();
+        
+        /// <summary>
+        /// This should not trigger internal hardware for on-reads, but should only return the information at the location
+        /// CPURead will always be invoked immediately after
+        /// </summary>
+        /// <returns></returns>
+        [Pure] public byte CPUReadByte();
+        
+        public byte[] ProgramROM   { get; set; }
+        public byte[] CharacterROM { get; set; }
     }
 }
