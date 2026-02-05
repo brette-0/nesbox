@@ -121,7 +121,7 @@ internal static class System {
                 case NOISE_ENVELOPE:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case NOISE_MODE:       throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case NOISE_COUNTER:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case  DMC_MODE:        throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case DMC_MODE:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
