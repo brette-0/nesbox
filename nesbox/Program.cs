@@ -17,7 +17,11 @@ internal static class Program {
                         Console.WriteLine("[EMU] No throttle speed");
                         return;
                     }
-                    // throttle speed = args.Current
+
+                    if (!float.TryParse(args.Current, out System.Throttle)) {
+                        Console.WriteLine("[EMU] Throttle must be a float");
+                    }
+                    
                     break;
                 
                 case "--2c02":  // ntsc
@@ -49,12 +53,24 @@ internal static class Program {
                     break;
             }
         }
+
+        if (System.Throttle < 0f) {
+            Console.WriteLine("[EMU] Throttle must be a positive number");
+            return;
+        }
         
-        Implementation.Initialize(next);
-        Renderer.Initialize();
-        System.CPU.Initialize();
+        Implementation.Initialize(next); if (System.Quit) {
+            return;
+        }
+        Renderer.Initialize(); if (System.Quit) {
+            return;
+        }
+        System.Initialize(); if (System.Quit) {
+            return;
+        }
+        
         while (!System.Quit) {
-            
+            // open lua terminal (used to change behavior during runtime to replace UI)
         }
     }
 

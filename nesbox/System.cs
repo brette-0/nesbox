@@ -1,8 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
-
-using static nesbox.CPU.OpCodes;
-
+using nesbox.CPU;
 namespace nesbox;
 
 internal static class System {
@@ -44,56 +42,72 @@ internal static class System {
         
         
         internal static void Read() {
-            CPU.Data = CPU.Address switch {
-                < 0x2000 => SystemRAM[CPU.Address & 0x7ff],
-                < 0x4000 => (CPU.Address & 0b0010_0111) switch {
-                    PPUCTRL   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                    PPUMASK   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                    PPUSTATUS => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                    OAMADDR   => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
-                    OAMDATA   => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
-                    PPUSCROLL => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                    PPUADDR   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                    PPUDATA   => throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"),
-                },
+            if (Address < 0x2000) {
+                Data = SystemRAM[Address & 0x7ff];
+                goto SendReadToCart;
+            }
+            
+            if (Address < 0x4000) {
+                switch (Address & 0x2007) {
+                    case PPUCTRL:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case OAMDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUSCROLL: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    default:
+                        Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
+                        Quit = true;
+                        return;
+                }
+            }
+
+            if (Address > 0x4020) {
+                Data = Program.Cartridge.CPUReadByte();
+                goto SendReadToCart;
+            }
+
+            switch (Address) {
+                case PULSE1_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE2_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE1_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE2_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE1_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE2_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE1_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case PULSE2_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case TRIANGLE_COUNTER: throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case TRIANGLE_TIMER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case TRIANGLE_LINEAR:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case NOISE_ENVELOPE:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case NOISE_MODE:       throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case NOISE_COUNTER:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case DMC_MODE:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
+                case IODEVICE1:        Data = Program.Controller1?.OnRead() ?? 0; goto SendReadToCart;
+                case IODEVICE2:        Data = Program.Controller2?.OnRead() ?? 0; goto SendReadToCart;
                 
-                PULSE1_ENVELOPE  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE2_ENVELOPE  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE1_COUNTER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE2_COUNTER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE1_SWEEP     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE2_SWEEP     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE1_TIMER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                PULSE2_TIMER     => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                TRIANGLE_COUNTER => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                TRIANGLE_TIMER   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                TRIANGLE_LINEAR  => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                NOISE_ENVELOPE   => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                NOISE_MODE       => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                NOISE_COUNTER    => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                DMC_MODE         => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                DMC_LOAD         => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                DMC_ASAMPLE      => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                DMC_LSAMPLE      => throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"),
-                OAMDMA           => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                CHANNELSTATUS    => throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"),
-                IODEVICE1        => Program.Controller1?.OnRead() ?? 0,
-                IODEVICE2        => Program.Controller2?.OnRead() ?? 0,
-                >= 0x4020        => Program.Cartridge.CPUReadByte(),
-                
-                _ => (byte)(CPU.Address >> 8) // open bus
-            };
+                default: Data = (byte)(Address >> 8); goto SendReadToCart;
+            }
+            
+            SendReadToCart:
             Program.Cartridge.CPURead();
         }
         
         internal static void Write() {
-            switch (CPU.Address) {
+            switch (Address) {
                 case < 0x2000:
-                    SystemRAM[CPU.Address & 0x7fff] = CPU.Data;
+                    SystemRAM[Address & 0x7fff] = Data;
                     break;
                 
                 case < 0x4000:
-                    switch (CPU.Address & 0b0010_0111) {
+                    switch (Address & 0b0010_0111) {
                         case PPUCTRL:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
                         case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
                         case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
@@ -126,7 +140,7 @@ internal static class System {
                 case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case IODEVICE1:
-                    if ((CPU.Data & 1) is 0) break;
+                    if ((Data & 1) is 0) break;
                     Program.Controller1?.OnWrite();
                     Program.Controller2?.OnWrite();
                     break;
@@ -143,42 +157,48 @@ internal static class System {
         }
 
         internal static void Push() {
-            ref var s = ref CPU.Register.S;
-            CPU.ADL = s;
-            CPU.ADH = 0x01;
-            CPU.DriveAddressPins();
+            ref var s = ref Register.S;
+            ADL = s;
+            ADH = 0x01;
+            DriveAddressPins();
             Write();
             s--;
         }
         
         internal static void Pull() {
-            ref var s = ref CPU.Register.S;
-            CPU.ADL = s;
-            CPU.ADH = 0x01;
-            CPU.DriveAddressPins();
+            ref var s = ref Register.S;
+            ADL = s;
+            ADH = 0x01;
+            DriveAddressPins();
             
             Read();
             s++;;
         }
 
-        private static byte[] SystemRAM = new byte[0x800];
+        internal static byte[] SystemRAM = new byte[0x800];
     }
     
     internal const int DOTS_PER_FRAME = 89_342;
     
-    internal static class CPU {
-        /// <summary>
+    /// <summary>
         /// Begin CPU Emulation
         /// </summary>
         internal static void Initialize() {
-            Program.Threads.System = new Thread(__Initialize){IsBackground = false};
+            Program.Threads.System = new Thread(RunCPU){IsBackground = false};
             Program.Threads.System.Start();
         }
         
-        private static void __Initialize() {
+        private static void RunCPU() {
+            Console.WriteLine("[CPU] System is Running");
+            
             Register.AC = (byte)Random.Shared.Next();
             Register.X  = (byte)Random.Shared.Next();
             Register.Y  = (byte)Random.Shared.Next();
+            Register.S  = 0xfd;
+            Register.i  = true;
+
+            Reset    = true;
+            OpHandle = StepReset;
 
             var sw = Stopwatch.StartNew();
 
@@ -192,17 +212,18 @@ internal static class System {
                 // PPU step dot
                 if (virtualTime % 3 is 0) {
                     Step();
+                    if (Quit) return;
                     // APU step cycle
                 }
 
-                if (_throttle is not 0f) {
+                if (Throttle is not 0f) {
                     // only present video when throttling
                     // TODO: On init disable throttle, show UI "Throttling"
                     //       this will indicate user should use breakpoints or lua
                     if (virtualTime % DOTS_PER_FRAME is 0) {
                         Renderer.Present();
                     
-                        var effectiveFrameTime = frameTime / _throttle;
+                        var effectiveFrameTime = frameTime / Throttle;
                         var now                = sw.Elapsed.TotalSeconds;
                         var remaining          = nextFrameDeadLine - now;
 
@@ -216,7 +237,12 @@ internal static class System {
                             Console.WriteLine($"[CPU] Program is running behind schedule {MathF.Abs((float)remaining)}s");
                             remaining = 0;
                         }
-                    
+
+                        
+                        //#if DEBUG
+                        //Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
+                        //#endif
+                        
                         Thread.Sleep(TimeSpan.FromSeconds(remaining));
                         nextFrameDeadLine += effectiveFrameTime;
                     }
@@ -229,37 +255,102 @@ internal static class System {
         }
 
         private static void Step() {
-            switch (cycle) {
-                case 0:
-                    if (NMIPending) {
-                        Vector   = Vectors.NMI;
-                        OpHandle = Interrupt;
-                        break;
-                    }
-
-                    if (IRQPending) {
-                        if (Register.i) break;
-
-                        Vector   = Vectors.IRQ;
-                        OpHandle = Interrupt;
-                        break;
-                    }
-                    
-                    AD          = PC;
-                    DriveAddressPins();
+            if (cycle is 0) {
+                if (Reset) {
+                    Console.WriteLine("[CPU] Resetting CPU");
+                    OpHandle = StepReset;
+                    goto HandleInstruction;
+                }
                 
-                    Memory.Read();
-                    PC++;
-                    Register.IR = Data;
-                    OpHandle    = GetOpcodeSolver(Register.IR);
-                    break;
+                if (NMIPending) {
+                    Vector   = Vectors.NMI;
+                    OpHandle = Interrupt;
+                    goto HandleInstruction;
+                }
+
+                if (IRQPending) {
+                    if (Register.i) goto HandleInstruction;;
+
+                    Vector   = Vectors.IRQ;
+                    OpHandle = Interrupt;
+                    goto HandleInstruction;
+                }
                 
-                case > 0:
-                    OpHandle();
-                    break;
+                AD          = PC;
+                DriveAddressPins();
+                
+                Memory.Read();
+                PC++;
+                Register.IR = Data;
+                OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
+                cycle++;
+                return;
             }
             
-            cycle++;
+            HandleInstruction:
+                OpHandle();
+                cycle++;
+        }
+
+        private static void StepReset() {
+            #if DEBUG
+            Console.WriteLine($"Resetting CPU : {cycle} / 6");
+            #endif
+            switch (cycle) {
+                case 0:
+                    AD = PC;
+                    DriveAddressPins();
+                    Memory.Read();
+                    break;
+                
+                
+                case 1:
+                    ADL = 0x01;
+                    ADH = Register.S;
+                    DriveAddressPins();
+                    Memory.Read();
+                    Register.S--;
+                    break;
+                
+                case 2:
+                    ADL = 0x01;
+                    ADH = Register.S;
+                    DriveAddressPins();
+                    Memory.Read();
+                    Register.S--;
+                    break;
+                
+                case 3:
+                    ADL = 0x01;
+                    ADH = Register.S;
+                    DriveAddressPins();
+                    Memory.Read();
+                    Register.S--;
+                    Register.i = true;
+                    break;
+                
+                case 4:
+                    AD = 0xfffc;
+                    DriveAddressPins();
+                    Memory.Read();
+                    DB = Data;
+                    break;
+                
+                case 5:
+                    AD = 0xfffd;
+                    DriveAddressPins();
+                    Memory.Read();
+                    PCL   = DB;
+                    PCH   = Data;
+                    cycle = 0xff;
+                    Reset = false;
+                    break;
+                
+                default:
+                    Console.WriteLine("[CPU] StepReset on incorrect cycle");
+                    Quit = true;
+                    break;
+            }
         }
 
         private static void Interrupt() {
@@ -321,9 +412,10 @@ internal static class System {
         private  static ushort Vector;
         internal static bool   IRQPending;
         private  static bool   NMIPending;
+        private static  bool   Reset;
         
         private static  Action OpHandle;
-        internal static sbyte  cycle;
+        internal static byte   cycle;
 
         internal static ushort Address;
         internal static byte   Data;
@@ -380,10 +472,9 @@ internal static class System {
         }
 
         private const ulong BaseClockSpeed = 1_789_773ul;
-    }
 
-    private  const  double SECONDS_PER_FRAME = 0d;
-    private  static float  _throttle         = 0f;
-    internal static ulong virtualTime        = 0;
-    internal static bool  Quit               = false;
+    private  const  double SECONDS_PER_FRAME  = 0d;
+    internal static float  Throttle           = float.NegativeInfinity;
+    internal static ulong  virtualTime        = 0;
+    internal static bool   Quit               = false;
 }

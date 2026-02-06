@@ -1,7 +1,8 @@
 ﻿using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace nesbox.CPU;
-using static System.CPU;
+using static System;
 using Memory = System.Memory;
 
 // TODO: Add Branching, Implied Mode, Calling, Jumping instructions and verify all.
@@ -64,12 +65,12 @@ internal static class OpCodes {
                     Memory.Read();
 
                     PC    = (ushort)((Data << 8) | DB);
-                    cycle = 0;
+                    cycle = 0xff;
                     break;
 
                 default:
                     Console.WriteLine("[CPU] Performed BRK on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
             }
         },
@@ -103,7 +104,7 @@ internal static class OpCodes {
         /* 17 slo d+x */ () => DirectPageIndexed(Register.X, SLO),
         /* 18 clc */ () => {
             Register.c = false;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* 19 ora a+y */ () => AbsoluteIndexed(Register.Y, ORA),
         /* 1a nop     */ () => { },
@@ -120,9 +121,7 @@ internal static class OpCodes {
         /* 20 jsr a   */ () => {
             switch (cycle) {
                 case 1:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
 
                     DB = Data;
@@ -137,28 +136,27 @@ internal static class OpCodes {
                     break;
 
                 case 3:
-                    Data = (byte)((PC - 1) >> 8);
+                    Data = PCH;
                     Memory.Push();
                     break;
 
                 case 4:
-                    Data = (byte)((PC - 1) & 0xff);
+                    Data = PCL;
                     Memory.Push();
                     break;
 
                 case 5:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
 
-                    PC    = (ushort)((Data << 8) | DB);
-                    cycle = 0;
+                    PCH   = Data;
+                    PCL   = DB;
+                    cycle = 0xff;
                     break;
 
                 default:
                     Console.WriteLine("[CPU] Performed JSR absolute on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
 
             }
@@ -193,7 +191,7 @@ internal static class OpCodes {
         /* 37 rla d+x */ () => DirectPageIndexed(Register.X, RLA),
         /* 38 sec */ () => {
             Register.c = true;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* 39 and a+y */ () => AbsoluteIndexed(Register.Y, AND),
         /* 3a nop     */ () => { },
@@ -210,16 +208,14 @@ internal static class OpCodes {
         /* 40 rti    */ () => {
             switch (cycle) {
                 case 1:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
                     break;
 
                 case 2:
-                    Register.S++;
-                    ADL = Register.S;
                     ADH = 0x01;
+                    ADL = ++Register.S;
+                    
                     DriveAddressPins();
                     Memory.Read();
 
@@ -253,22 +249,21 @@ internal static class OpCodes {
                     ADH = 0x01;
                     DriveAddressPins();
                     Memory.Read();
-
-                    PC = (ushort)((Data << 8) | DB);
+                    
+                    PCH = Data;
+                    PCL = DB;
                     break;
 
                 case 5:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
 
-                    cycle = 0;
+                    cycle = 0xff;
                     break;
 
                 default:
                     Console.WriteLine("[CPU] Performed RTI on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
             }
         },
@@ -282,7 +277,7 @@ internal static class OpCodes {
         /* 48 pha     */ () => {
             Data = Register.AC;
             Memory.Push();
-            cycle = 0;
+            cycle = 0xff;
         },
         /* 49 eor #   */ () => Immediate(EOR),
         /* 4a lsr     */ LSRA,
@@ -290,9 +285,7 @@ internal static class OpCodes {
         /* 4c jmp a   */ () => {
             switch (cycle) {
                 case 1:
-                    ADL = PCL;
-                    ADH = PCH;
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
 
                     ADL = Data;
@@ -300,20 +293,20 @@ internal static class OpCodes {
                     break;
 
                 case 2:
-                    ADL = PCL;
-                    ADH = PCH;
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
 
-                    PC = (ushort)((Data << 8) | ADL);
-
-                    cycle = 0;
+                    ADH = Data;
+                    DriveAddressPins();
+                    PC = Address;
+                    
+                    cycle = 0xff;
                     break;
 
 
                 default:
                     Console.WriteLine("[CPU] Performed JMP absolute on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
             }
         },
@@ -335,7 +328,7 @@ internal static class OpCodes {
         /* 57 sre d+x */ () => DirectPageIndexed(Register.X, SRE),
         /* 58 cli */ () => {
             Register.i = false;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* 59 eor a+y */ () => AbsoluteIndexed(Register.Y, EOR),
         /* 5a nop     */ () => { },
@@ -352,20 +345,15 @@ internal static class OpCodes {
         /* 60 rts     */ () => {
             switch (cycle) {
                 case 1:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                    Address = PC;
                     Memory.Read();
                     break;
 
                 case 2:
-                    Register.S++;
                     ADL = Register.S;
                     ADH = 0x01;
                     DriveAddressPins();
                     Memory.Read();
-
-                    DB = Data;
                     break;
 
                 case 3:
@@ -379,20 +367,28 @@ internal static class OpCodes {
                     break;
 
                 case 4:
+                    Register.S++;
+                    ADL = Register.S;
+                    ADH = 0x01;
+                    DriveAddressPins();
+                    Memory.Read();
+                    PCL = DB;
+                    PCH = Data;
+                    break;
+                
+                case 5:
                     PC++;
                     break;
 
-                case 5:
-                    ADL = (byte)(PC & 0xFF);
-                    ADH = (byte)(PC >> 8);
-                    DriveAddressPins();
+                case 6:
+                    Address = PC;
                     Memory.Read();
-                    cycle = 0;
+                    cycle = 0xff;
                     break;
 
-                case 6:
+                default:
                     Console.WriteLine("[CPU] Performed RTS on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
             }
         },
@@ -406,7 +402,7 @@ internal static class OpCodes {
         /* 68 pla     */ () => {
             Memory.Pull();
             Register.AC = Data;
-            cycle       = 0;
+            cycle       = 0xff;
         },
         /* 69 adc #   */ () => Immediate(ADC),
         /* 6a ror     */ RORA,
@@ -454,12 +450,12 @@ internal static class OpCodes {
                     Memory.Read();
 
                     PC    = (ushort)((Data << 8) | DB);
-                    cycle = 0;
+                    cycle = 0xff;
                     break;
 
                 default:
                     Console.WriteLine("[CPU] Performed JMP indirect on incorrect cycle");
-                    System.Quit = true;
+                    Quit = true;
                     break;
             }
         },
@@ -481,7 +477,7 @@ internal static class OpCodes {
         /* 77 rra d+x */ () => DirectPageIndexed(Register.X, RRA),
         /* 78 sei     */ () => {
             Register.i = true;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* 79 adc a+y */ () => AbsoluteIndexed(Register.Y, ADC),
         /* 7a nop     */ () => { },
@@ -505,13 +501,13 @@ internal static class OpCodes {
         /* 87 sax d   */ () => DirectPage(SAX),
         /* 88 dey     */ () => {
             Register.Y--;
-            cycle = 0;
+            cycle = 0xff;
             NonArithmeticProcessorFlagSets(Register.Y);
         },
         /* 89 nop #   */ () => Immediate(() => { }),
         /* 8a txa     */ () => {
             Register.AC = Register.X;
-            cycle       = 0;
+            cycle       = 0xff;
             NonArithmeticProcessorFlagSets(Register.AC);
         },
         /* 8b xaa #   */ () => Immediate(XAA),
@@ -534,13 +530,13 @@ internal static class OpCodes {
         /* 97 sax d+y */ () => DirectPageIndexed(Register.Y, SAX),
         /* 98 tya     */ () => {
             Register.AC = Register.Y;
-            cycle       = 0;
+            cycle       = 0xff;
             NonArithmeticProcessorFlagSets(Register.AC);
         },
         /* 99 sta a+y */ () => AbsoluteIndexed(Register.Y, STA),
         /* 9a txs     */ () => {
             Register.S = Register.X;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* 9b tas a+y */ () => AbsoluteIndexed(Register.Y, TAS),
         /* 9c shy a+x */ () => AbsoluteIndexed(Register.X, SHY),
@@ -562,13 +558,13 @@ internal static class OpCodes {
         /* a7 lax d    */ () => DirectPage(LAX),
         /* a8 tay      */ () => {
             Register.Y = Register.AC;
-            cycle      = 0;
+            cycle      = 0xff;
             NonArithmeticProcessorFlagSets(Register.Y);
         },
         /* a9 lda #imm */ () => Immediate(LDA),
         /* aa tax      */ () => {
             Register.X = Register.AC;
-            cycle      = 0;
+            cycle      = 0xff;
             NonArithmeticProcessorFlagSets(Register.X);
         },
         /* ab lax #imm */ () => Immediate(LAXI),
@@ -591,12 +587,12 @@ internal static class OpCodes {
         /* b7 lax d+y */ () => DirectPageIndexed(Register.Y, LAX),
         /* b8 clv     */ () => {
             Register.v = false;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* b9 lda a,x */ () => AbsoluteIndexed(Register.X, LDA),
         /* ba tsx     */ () => {
             Register.X = Register.S;
-            cycle      = 0;
+            cycle      = 0xff;
             NonArithmeticProcessorFlagSets(Register.X);
         },
         /* bb las a,y */ () => AbsoluteIndexed(Register.Y, LAS),
@@ -619,13 +615,13 @@ internal static class OpCodes {
         /* c7 dcp d   */ () => DirectPage(DCP),
         /* c8 iny     */ () => {
             Register.Y++;
-            cycle = 0;
+            cycle = 0xff;
             NonArithmeticProcessorFlagSets(Register.Y);
         },
         /* c9 cmp #   */ () => Immediate(CMP),
         /* ca dex     */ () => {
             Register.X--;
-            cycle = 0;
+            cycle = 0xff;
             NonArithmeticProcessorFlagSets(Register.X);
         },
         /* cb axs #   */ () => Immediate(AXS),
@@ -648,7 +644,7 @@ internal static class OpCodes {
         /* d7 dcp d+x */ () => DirectPageIndexed(Register.X, DCP),
         /* d8 cld     */ () => {
             Register.d = false;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* d9 cmp a+y */ () => AbsoluteIndexed(Register.Y, CMP),
         /* da nop     */ () => { },
@@ -672,7 +668,7 @@ internal static class OpCodes {
         /* e7 isc d   */ () => DirectPage(ISC),
         /* e8 inx     */ () => {
             Register.X++;
-            cycle = 0;
+            cycle = 0xff;
             NonArithmeticProcessorFlagSets(Register.X);
         },
         /* e9 sbc #   */ () => Immediate(SBC),
@@ -697,7 +693,7 @@ internal static class OpCodes {
         /* f7 isc d+x */ () => DirectPageIndexed(Register.X, ISC),
         /* f8 sed     */ () => {
             Register.d = true;
-            cycle      = 0;
+            cycle      = 0xff;
         },
         /* f9 sbc a+y */ () => AbsoluteIndexed(Register.Y, SBC),
         /* fa nop     */ () => { },
@@ -733,7 +729,7 @@ internal static class OpCodes {
                 DB = Data;
                 PC++;
 
-                if (!condition()) cycle = 0;
+                if (!condition()) cycle = 0xff;
                 break;
 
             case 2:
@@ -756,7 +752,7 @@ internal static class OpCodes {
 
                 PC = (ushort)((PC & 0xFF00) | ADL);
 
-                if ((sum & 0x100) == 0) cycle = 0;
+                if ((sum & 0x100) == 0) cycle = 0xff;
                 break;
 
             case 4:
@@ -765,12 +761,12 @@ internal static class OpCodes {
                 Memory.Read();
 
                 PC    = (ushort)((ADH << 8) | ADL);
-                cycle = 0;
+                cycle = 0xff;
                 break;
 
             default:
                 Console.WriteLine("[CPU] Performed Branch on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
         }
     }
@@ -940,7 +936,7 @@ internal static class OpCodes {
     // does not need method attribute, would never be accessed
     private static void JAM() {
         Console.WriteLine("[CPU] Encountered CPU Jam.");
-        System.Quit = true;
+        Quit = true;
     }
     
     [RWKind(RWKind.Read)] 
@@ -1060,9 +1056,7 @@ internal static class OpCodes {
         
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
-                DriveAddressPins();
+                Address = PC;
                 Memory.Read();
                 
                 ADL  = Data;
@@ -1070,12 +1064,9 @@ internal static class OpCodes {
                 break;
             
             case 2:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
-                DriveAddressPins();
+                Address = PC;
                 Memory.Read();
-                
-                ADH  = Data;
+                ADH = Data;
                 PC++;
                 break;
             
@@ -1124,11 +1115,17 @@ internal static class OpCodes {
             
             case 5: 
                 if (kind is RWKind.RMW) goto complete;
-                goto default;
+                DriveAddressPins();
+                Memory.Write();
+                break;
                 
+            case 6: 
+                if (kind is RWKind.RMW) goto complete;
+                goto default;
+            
             default:
                 Console.WriteLine("[CPU] Performed Absolute Indexed on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:
@@ -1145,8 +1142,7 @@ internal static class OpCodes {
         
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                Address = PC;
                 DriveAddressPins();
                 Memory.Read();
                 
@@ -1197,7 +1193,7 @@ internal static class OpCodes {
             
             default:
                 Console.WriteLine("[CPU] Performed Direct Page Indexed on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:
@@ -1207,23 +1203,16 @@ internal static class OpCodes {
         }
     }
 
-    #if RELEASE
-    private static RWKind GetOpType(ref Action ctx) => ctx.Method.GetCustomAttribute<RWKindAttribute>()!.Kind;
-    #else
-    private static RWKind GetOpType(ref Action ctx) {
-        var kind = ctx.Method.GetCustomAttribute<RWKindAttribute>()?.Kind;
-        return kind ?? throw new ArgumentNullException(nameof(ctx));
-    }
+    private static RWKind GetOpType(ref Action ctx) => 
+        ctx.Method.GetCustomAttribute<RWKindAttribute>()?.Kind ?? RWKind.Read;
     
-    #endif
     private static void Absolute(Action ctx) {
         var    kind = GetOpType(ref ctx);
         Action post = kind is RWKind.Read ? EndRead : EndRest;
         
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                Address = PC;
                 DriveAddressPins();
                 Memory.Read();
                 
@@ -1232,9 +1221,7 @@ internal static class OpCodes {
                 break;
             
             case 2:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
-                DriveAddressPins();
+                Address = ++PC;
                 Memory.Read();
                 
                 ADH  = Data;
@@ -1260,7 +1247,7 @@ internal static class OpCodes {
             
             default:
                 Console.WriteLine("[CPU] Performed Absolute read on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:
@@ -1270,12 +1257,12 @@ internal static class OpCodes {
         }
     }
 
-    private static void EndRead()  => cycle = 0;
+    private static void EndRead()  => cycle = 0xff;
 
     private static void EndRest() {
         DriveAddressPins();
         Memory.Write();
-        cycle = 0;
+        cycle = 0xff;
     }
 
     private static void DirectPage(Action ctx) {
@@ -1284,9 +1271,7 @@ internal static class OpCodes {
         
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
-                DriveAddressPins();
+                Address = PC;
                 Memory.Read();
                 
                 ADL = Data;
@@ -1307,13 +1292,11 @@ internal static class OpCodes {
                         throw new ArgumentOutOfRangeException($"Instruction Type {nameof(RWKind)} is invalid.");
                 }
 
-                ADL  = DB;
-                ADH  = 0x00;
                 goto complete;
             
             default:
                 Console.WriteLine("[CPU] Performed Direct Page read on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:
@@ -1331,50 +1314,47 @@ internal static class OpCodes {
         #endif
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                ADL = PCL;
+                ADH = PCH;
 
                 DriveAddressPins();
                 Memory.Read();
                 PC++;
                 ctx();
-                cycle = 0;
+                cycle = 0xff;
                 break;
             
             default:
-                Console.WriteLine("[CPU] Performed Immediate read on incorrect cycle");
-                System.Quit = true;
+                Console.WriteLine($"[CPU] Performed Immediate read on incorrect cycle {cycle}");
+                Quit = true;
                 break;
         }
     }
 
+    
     private static void IndirectIndexed(Action ctx) {
         var    kind = GetOpType(ref ctx);
         Action post = kind is RWKind.Read ? EndRead : EndRest;
         
         switch (cycle){
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                Address = PC;
                 DriveAddressPins();
                 Memory.Read();
-                
-                DB   = Data;      
+                DB = Data;                
                 PC++;
                 break;
 
             case 2:
-                ADL = Data;
-                ADH = 0x00;
-
-                DriveAddressPins();
+                Address = DB;
                 Memory.Read();
-
+                
+                ADL     = Data;
                 break;
 
             case 3:
                 ADL = (byte)(DB + 1);
-                ADH = 0x00;
+                ADH = Data;
 
                 DriveAddressPins();
                 Memory.Read();
@@ -1433,7 +1413,7 @@ internal static class OpCodes {
                  
             default:
                 Console.WriteLine("[CPU] Performed Indirect Indexed read on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:
@@ -1448,9 +1428,8 @@ internal static class OpCodes {
         Action post = kind is RWKind.Read ? EndRead : EndRest;
         
         switch (cycle) {
-            case 1: 
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+            case 1:
+                Address = PC;
                 DriveAddressPins();
                 Memory.Read();
                 
@@ -1459,26 +1438,19 @@ internal static class OpCodes {
                 break;
                 
             case 2:
-                ADL = DB;
-                ADH = 0x00;
-                
-                DriveAddressPins();
+                Address = DB;
                 Memory.Read();
                 break;
                 
             case 3:
-                ADL  = (byte)(DB + Register.X);
-                ADH  = 0x00;
-                
-                DriveAddressPins();
-                Memory.Read();ADL  = Data;
-                ADL  = Data;
+                Address = (byte)(DB + Register.X);
+                Memory.Read();
+
+                ADH = Data;
                 break;
                 
             case 4:
-                ADL  = (byte)(DB + Register.X + 1);
-                ADH  = 0x00;
-                DriveAddressPins();
+                Address  = (byte)(DB + Register.X + 1);
                 Memory.Read();
 
                 ADH  = Data;
@@ -1516,7 +1488,7 @@ internal static class OpCodes {
             
             default:
                 Console.WriteLine("[CPU] Performed Indexed Indirect read on incorrect cycle");
-                System.Quit = true;
+                Quit = true;
                 break;
             
             complete:

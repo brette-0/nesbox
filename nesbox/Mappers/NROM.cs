@@ -22,6 +22,10 @@ internal sealed class NROM : API.ICartridge {
                         return;
                     }
                     
+                    #if DEBUG
+                    Console.WriteLine("Fetching Program ROM...");
+                    #endif
+                    
                     API.GetProgramROM(args.Current, ref __ProgramROM);
                     if (ProgramROM.Length is 0) {
                         System.Quit = true;
@@ -66,21 +70,29 @@ internal sealed class NROM : API.ICartridge {
         
         if (ProgramROM.Length > 0x8000) {
             Console.WriteLine($"[CART] Program ROM is too large");
+            System.Quit = true;
+            return;
         }
 
         if ((ProgramROM.Length & ~0xc000) != ProgramROM.Length) {
             Console.WriteLine($"[CART] Program ROM is illegal size");
+            System.Quit = true;
+            return;
         }
 
         if (CharacterROM.Length > 0x2000) {
             Console.WriteLine($"[CART] Character ROM is too large");
+            System.Quit = true;
+            return;
         }
 
-        if ((CharacterROM.Length & ~0x2000) != ProgramROM.Length) {
+        if ((CharacterROM.Length & ~0x2000) != CharacterROM.Length) {
             Console.WriteLine($"[CART] Character ROM is illegal size");
+            System.Quit = true;
+            return;
         }
 
-        if (ProgramROM.Length is 0x4000) CPUReadByteTask = (self) => self.SmallProgramCPUReadByte();
+        if (ProgramROM.Length < 0x8000) CPUReadByteTask = (self) => self.SmallProgramCPUReadByte();
         
         args = next;
     }
@@ -107,14 +119,14 @@ internal sealed class NROM : API.ICartridge {
     #region CPUReadByte
     private Func<NROM, byte> CPUReadByteTask = (self) => self.StandardProgramCPUReadByte();
     
-    private byte SmallProgramCPUReadByte() => System.CPU.Address switch {
-        < 0x8000                           => (byte)(System.CPU.Address >> 8),
-        _                                  => ProgramROM[System.CPU.Address & 0x7fff]
+    private byte SmallProgramCPUReadByte() => System.Address switch {
+        < 0x8000                           => (byte)(System.Address >> 8),
+        _                                  => ProgramROM[System.Address & (ProgramROM.Length - 1)]
     };
     
-    private byte StandardProgramCPUReadByte() => System.CPU.Address switch {
-        < 0x8000 => (byte)(System.CPU.Address >> 8),
-        _        => ProgramROM[System.CPU.Address]
+    private byte StandardProgramCPUReadByte() => System.Address switch {
+        < 0x8000 => (byte)(System.Address >> 8),
+        _        => ProgramROM[System.Address]
     };
     #endregion CPUReadByte
     

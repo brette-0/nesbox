@@ -18,7 +18,10 @@ internal static class API {
 
     private static void GetFile(string fp, ref byte[] fileObject, string taskName) {
         try {
-            fileObject   = File.ReadAllBytes(fp);;
+            fileObject   = File.ReadAllBytes(fp);
+            #if DEBUG
+            Console.WriteLine($"Found file for {taskName} at {fp}");
+            #endif
         } catch (Exception e) {
             switch (e) {
                 case FileNotFoundException:
@@ -42,9 +45,9 @@ internal static class API {
     }
 
     public class HasIRQLine {
-        public void SetIRQLine(bool assertion) => System.CPU.IRQPending = assertion;
-        public void DeassertIRQ()              => System.CPU.IRQPending = false;
-        public void AssertIRQ()                => System.CPU.IRQPending = true;
+        public void SetIRQLine(bool assertion) => System.IRQPending = assertion;
+        public void DeassertIRQ()              => System.IRQPending = false;
+        public void AssertIRQ()                => System.IRQPending = true;
     }
 
     internal interface ICartridge {
