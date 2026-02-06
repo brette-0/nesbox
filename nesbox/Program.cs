@@ -51,15 +51,21 @@ internal static class Program {
         }
         
         Implementation.Initialize(next);
-        System.Initialize();
+        Renderer.Initialize();
+        System.CPU.Initialize();
         while (!System.Quit) {
             
         }
     }
 
-    internal static API.ICartridge Cartridge;
-    internal static API.IIO?       Controller1;
-    internal static API.IIO?       Controller2;
+    internal static class Threads {
+        internal static Thread? Renderer;
+        internal static Thread? System;
+    }
+
+    internal static API.ICartridge? Cartridge;
+    internal static API.IIO?        Controller1;
+    internal static API.IIO?        Controller2;
     
     internal static class Config {
         internal static bool Strict;

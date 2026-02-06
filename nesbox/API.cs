@@ -41,6 +41,12 @@ internal static class API {
         public void SetIndex(byte Index);
     }
 
+    public class HasIRQLine {
+        public void SetIRQLine(bool assertion) => System.CPU.IRQPending = assertion;
+        public void DeassertIRQ()              => System.CPU.IRQPending = false;
+        public void AssertIRQ()                => System.CPU.IRQPending = true;
+    }
+
     internal interface ICartridge {
         /// <summary>
         /// Expects information from CPU Address, is contextualized as a read

@@ -7,10 +7,12 @@ internal enum NameTableArrangements : byte {
     Horizontal
 }
 
-public class NROM : API.ICartridge {
+internal sealed class NROM : API.ICartridge {
     public NROM(ref EList<string> args) {
         var next = new EList<string>();
 
+        
+        
         while (args.MoveNext()) {
             switch (args.Current) {
                 case "--program":

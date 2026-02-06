@@ -1,7 +1,5 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using nesbox.CPU;
-using SDL3;
 
 using static nesbox.CPU.OpCodes;
 
@@ -165,101 +163,19 @@ internal static class System {
 
         private static byte[] SystemRAM = new byte[0x800];
     }
-
-    internal static void Initialize() {
-        CPU.Initialize();
-        PPU.Initialize();
-    }
     
-    
-    /// <summary>
-    /// Contains all members that concern PPU
-    /// </summary>
-    private static class PPU {
-        /// <summary>
-        /// Begin PPU Emulation
-        /// </summary>
-        internal static void Initialize() {
-            _thread = new Thread(__Initialize) {
-                IsBackground = false
-            };
-            _thread.Start();
-        }
-
-        private static void __Initialize() {
-            SDL.Init(SDL.InitFlags.Video);
-            
-            _window   = SDL.CreateWindow("PPU OUT", 256, 240, 0);
-
-            if (_window is 0) {
-                Console.WriteLine($"[SDL3] Create Window Failed: {SDL.GetError()}");
-                Quit = true;
-                return;
-            }
-            
-            _renderer = SDL.CreateRenderer(_window, null);
-            if (_renderer is 0) {
-                Console.WriteLine($"[SDL3] Create Renderer Failed: {SDL.GetError()}");
-                Quit = true;
-                return;
-            }
-            
-            if (!(_SDL3VSYNCSupported = SDL.SetRenderVSync(_renderer, 1))) {
-                Console.WriteLine($"[SDL3] VSync not supported: {SDL.GetError()}");
-            }
-            
-            
-            Console.WriteLine("PPU OUT init");
-            Lifetime();
-        }
-
-        private static void Lifetime() {
-            SDL.Event ev;
-            var       running = true;
-            
-            while (running) {
-                while (SDL.PollEvent(out ev)) {
-                    switch ((SDL.EventType)ev.Type) {
-                        case SDL.EventType.Quit:
-                            running = false;
-                            break;
-                    }
-                }
-                
-                SDL.SetRenderDrawColor(_renderer, 0, 0, 0, 255);
-                SDL.RenderClear(_renderer);
-                SDL.RenderPresent(_renderer);
-                
-                if (!_SDL3VSYNCSupported) {
-                    Thread.Sleep(1);
-                }
-            }
-            
-            Console.WriteLine("PPU OUT exit");
-            
-            SDL.DestroyRenderer(_renderer);
-            SDL.DestroyWindow(_window);
-            SDL.Quit();
-            Quit = true;
-        }
-
-        internal static void Present() {
-            
-        }
-
-        private static bool    _SDL3VSYNCSupported;
-        private static nint    _window;
-        private static nint    _renderer;
-        private static Thread? _thread;
-
-        internal const int DOTS_PER_FRAME = 89_342;
-    }
+    internal const int DOTS_PER_FRAME = 89_342;
     
     internal static class CPU {
         /// <summary>
         /// Begin CPU Emulation
         /// </summary>
         internal static void Initialize() {
+            Program.Threads.System = new Thread(__Initialize){IsBackground = false};
+            Program.Threads.System.Start();
+        }
+        
+        private static void __Initialize() {
             Register.AC = (byte)Random.Shared.Next();
             Register.X  = (byte)Random.Shared.Next();
             Register.Y  = (byte)Random.Shared.Next();
@@ -283,8 +199,8 @@ internal static class System {
                     // only present video when throttling
                     // TODO: On init disable throttle, show UI "Throttling"
                     //       this will indicate user should use breakpoints or lua
-                    if (virtualTime % PPU.DOTS_PER_FRAME is 0) {
-                        PPU.Present();
+                    if (virtualTime % DOTS_PER_FRAME is 0) {
+                        Renderer.Present();
                     
                         var effectiveFrameTime = frameTime / _throttle;
                         var now                = sw.Elapsed.TotalSeconds;
@@ -313,23 +229,101 @@ internal static class System {
         }
 
         private static void Step() {
-            if (cycle is 0) {
-                AD          = PC;
-                DriveAddressPins();
-                
-                Memory.Read();
-                PC++;
-                OpHandle    = GetOpcodeSolver(Register.IR);
-                return;
-            }
+            switch (cycle) {
+                case 0:
+                    if (NMIPending) {
+                        Vector   = Vectors.NMI;
+                        OpHandle = Interrupt;
+                        break;
+                    }
 
-            OpHandle();
+                    if (IRQPending) {
+                        if (Register.i) break;
+
+                        Vector   = Vectors.IRQ;
+                        OpHandle = Interrupt;
+                        break;
+                    }
+                    
+                    AD          = PC;
+                    DriveAddressPins();
+                
+                    Memory.Read();
+                    PC++;
+                    Register.IR = Data;
+                    OpHandle    = GetOpcodeSolver(Register.IR);
+                    break;
+                
+                case > 0:
+                    OpHandle();
+                    break;
+            }
+            
             cycle++;
         }
 
+        private static void Interrupt() {
+            switch (cycle) {
+                case 0:
+                    AD        = PC;
+                    DriveAddressPins();
+                    Memory.Read();
+                    return;
+                
+                
+                case 1:
+                    Data = PCH;
+                    Memory.Push();
+                    break;
+                
+                case 2:
+                    Data = PCL;
+                    Memory.Push();
+                    break;
+                
+                case 3:
+                    Data =
+                        (byte)((Register.c ? 1 : 0) << 0 |
+                               (Register.z ? 1 : 0) << 1 |
+                               (Register.i ? 1 : 0) << 2 |
+                               (Register.d ? 1 : 0) << 3 |
+                               (0 << 4)                  |
+                               (1 << 5)                  |
+                               (Register.v ? 1 : 0) << 6 |
+                               (Register.n ? 1 : 0) << 7);
+                    Memory.Push();
+                    Register.i = true;
+                    break;
+                
+                case 4:
+                    AD = Vector;
+                    DriveAddressPins();
+                    Memory.Read();
+                    DB  = Data;
+                    PCL = DB;
+                    break;
+                
+                case 5:
+                    AD = (ushort)(Vector + 1);
+                    DriveAddressPins();
+                    Memory.Read();
+                    PCL = DB;
+                    break;
+                
+                default:
+                    Console.WriteLine("[CPU] StepIRQ on incorrect cycle");
+                    Quit = true;
+                    break;
+            }
+        }
 
+
+        private  static ushort Vector;
+        internal static bool   IRQPending;
+        private  static bool   NMIPending;
+        
         private static  Action OpHandle;
-        internal static byte   cycle;
+        internal static sbyte  cycle;
 
         internal static ushort Address;
         internal static byte   Data;
