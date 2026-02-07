@@ -235,16 +235,13 @@ internal static class System {
                             } 
                             
                             Console.WriteLine($"[CPU] Program is running behind schedule {MathF.Abs((float)remaining)}s");
-                            remaining = 0;
+                            nextFrameDeadLine += effectiveFrameTime;
+                        } else {
+                            //Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
+                            Thread.Sleep(TimeSpan.FromSeconds(remaining));
+                            nextFrameDeadLine += effectiveFrameTime;
                         }
-
                         
-                        //#if DEBUG
-                        //Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
-                        //#endif
-                        
-                        Thread.Sleep(TimeSpan.FromSeconds(remaining));
-                        nextFrameDeadLine += effectiveFrameTime;
                     }
                 } else {
                     nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
@@ -477,4 +474,5 @@ internal static class System {
     internal static float  Throttle           = float.NegativeInfinity;
     internal static ulong  virtualTime        = 0;
     internal static bool   Quit               = false;
+
 }

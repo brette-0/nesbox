@@ -17,6 +17,12 @@ internal static class API {
     }
 
     private static void GetFile(string fp, ref byte[] fileObject, string taskName) {
+        if (Program.Threads.System is not null) {
+            Console.WriteLine("[EMU] Will not read files while emulating");
+            System.Quit = true;
+            return;
+        }
+        
         try {
             fileObject   = File.ReadAllBytes(fp);
             #if DEBUG

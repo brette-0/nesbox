@@ -65,6 +65,8 @@ internal static class Program {
         Renderer.Initialize(); if (System.Quit) {
             return;
         }
+
+        while (!Renderer.RendererReady) { }         // wait for renderer to become ready
         System.Initialize(); if (System.Quit) {
             return;
         }
@@ -74,9 +76,14 @@ internal static class Program {
         }
     }
 
+    internal static void LifetimeLogging() {
+        
+    }
+
     internal static class Threads {
         internal static Thread? Renderer;
         internal static Thread? System;
+        internal static Thread? Logger;
     }
 
     internal static API.ICartridge? Cartridge;

@@ -36,6 +36,7 @@ internal static class Renderer {
             
             
             Console.WriteLine("RENDER OUT init");
+            RendererReady = true;
             Lifetime();
         }
 
@@ -73,6 +74,8 @@ internal static class Renderer {
             
         }
 
+        internal static volatile bool RendererReady = false;
+        
         private static bool    _SDL3VSYNCSupported;
         private static nint    _window;
         private static nint    _renderer;
