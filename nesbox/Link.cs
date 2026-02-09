@@ -1,4 +1,6 @@
-﻿namespace nesbox;
+﻿using System.Runtime.CompilerServices;
+
+namespace nesbox;
 
 internal static class Link {
     /// <summary>
@@ -44,6 +46,7 @@ internal static class Link {
     /// <summary>
     /// Should only ever be called by System, should not be used by anyone's implementation.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void TriggerClockDrivenImplementations() {
         foreach (var clockDriven in ClockDrivenImplementations) {
             clockDriven.OnTick();

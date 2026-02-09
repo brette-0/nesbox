@@ -38,9 +38,8 @@ internal static class System {
         private const ushort IODEVICE1        = 0x4016;
         private const ushort IODEVICE2        = 0x4017;
         private const ushort FRAMECOUNTER     = 0x4017;
-
         
-        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Read() {
             if (Address < 0x2000) {
                 Data = SystemRAM[Address & 0x7ff];
@@ -100,10 +99,11 @@ internal static class System {
             Program.Cartridge.CPURead();
         }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Write() {
             switch (Address) {
                 case < 0x2000:
-                    SystemRAM[Address & 0x7fff] = Data;
+                    SystemRAM[Address & 0x7ff] = Data;
                     break;
                 
                 case < 0x4000:
@@ -156,6 +156,7 @@ internal static class System {
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Push() {
             ref var s = ref Register.S;
             ADL = s;
@@ -165,6 +166,7 @@ internal static class System {
             s--;
         }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Pull() {
             ref var s = ref Register.S;
             ADL = s;
@@ -216,11 +218,8 @@ internal static class System {
                     // APU step cycle
                 }
 
-                if (Throttle is not 0f) {
-                    // only present video when throttling
-                    // TODO: On init disable throttle, show UI "Throttling"
-                    //       this will indicate user should use breakpoints or lua
-                    if (virtualTime % DOTS_PER_FRAME is 0) {
+                if (virtualTime % DOTS_PER_FRAME is 0) {
+                    if (Throttle > 0f) {
                         Renderer.Present();
                     
                         var effectiveFrameTime = frameTime / Throttle;
@@ -237,20 +236,18 @@ internal static class System {
                             Console.WriteLine($"[CPU] Program is running behind schedule {MathF.Abs((float)remaining)}s");
                             nextFrameDeadLine += effectiveFrameTime;
                         } else {
-                            //Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
+                            Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
                             Thread.Sleep(TimeSpan.FromSeconds(remaining));
                             nextFrameDeadLine += effectiveFrameTime;
-                        }
-                        
+                        }    
                     }
-                } else {
-                    nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
                 }
-            
+           
                 ++virtualTime;
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Step() {
             if (cycle is 0) {
                 if (Reset) {

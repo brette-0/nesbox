@@ -19,7 +19,7 @@ internal static class Program {
                     }
 
                     if (!float.TryParse(args.Current, out System.Throttle)) {
-                        Console.WriteLine("[EMU] Throttle must be a float");
+                        Console.WriteLine("[EMU] Passed Argument for throttle must be a float");
                     }
                     
                     break;
@@ -53,11 +53,6 @@ internal static class Program {
                     break;
             }
         }
-
-        if (System.Throttle < 0f) {
-            Console.WriteLine("[EMU] Throttle must be a positive number");
-            return;
-        }
         
         Implementation.Initialize(next); if (System.Quit) {
             return;
@@ -73,18 +68,17 @@ internal static class Program {
         
         while (!System.Quit) {
             // open lua terminal (used to change behavior during runtime to replace UI)
+            Semaphore.Wait();
+            // TODO: Setup Semaphore such that it does work (eventually)
         }
-    }
-
-    internal static void LifetimeLogging() {
-        
     }
 
     internal static class Threads {
         internal static Thread? Renderer;
         internal static Thread? System;
-        internal static Thread? Logger;
     }
+    
+    internal static readonly SemaphoreSlim Semaphore = new SemaphoreSlim(0);
 
     internal static API.ICartridge? Cartridge;
     internal static API.IIO?        Controller1;
