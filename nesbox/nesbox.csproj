@@ -21,4 +21,16 @@
       <PackageReference Include="Vortice.XInput" Version="3.8.2" />
     </ItemGroup>
 
+    <PropertyGroup Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">
+        <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-'))">
+        <DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx-'))">
+        <DefineConstants>$(DefineConstants);MAC</DefineConstants>
+    </PropertyGroup>
+
 </Project>
