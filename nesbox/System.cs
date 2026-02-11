@@ -183,289 +183,325 @@ internal static class System {
     internal const int DOTS_PER_FRAME = 89_342;
     
     /// <summary>
-        /// Begin CPU Emulation
-        /// </summary>
-        internal static void Initialize() {
-            Program.Threads.System = new Thread(RunCPU){IsBackground = false};
-            Program.Threads.System.Start();
-        }
-        
-        private static void RunCPU() {
-            Console.WriteLine("[CPU] System is Running");
-            
-            Register.AC = (byte)Random.Shared.Next();
-            Register.X  = (byte)Random.Shared.Next();
-            Register.Y  = (byte)Random.Shared.Next();
-            Register.S  = 0xfd;
-            Register.i  = true;
+    /// Begin CPU Emulation
+    /// </summary>
+    internal static void Initialize() {
+        Program.Threads.System = new Thread(RunCPU){IsBackground = false};
+        Program.Threads.System.Start();
+    }
+    
+    private static void RunCPU() {
+        Console.WriteLine("[CPU] System is Running");
 
-            Reset    = true;
-            OpHandle = StepReset;
+        Register.AC = (byte)Random.Shared.Next();
+        Register.X  = (byte)Random.Shared.Next();
+        Register.Y  = (byte)Random.Shared.Next();
+        Register.S  = 0xfd;
+        Register.i  = true;
 
-            var sw = Stopwatch.StartNew();
+        Reset    = true;
+        OpHandle = StepReset;
 
-            const double fps       = 60.0988d;
-            const double frameTime = 1 / fps;
-        
-            var nextFrameDeadLine = sw.Elapsed.TotalSeconds + frameTime;
-        
-            while (!Quit) {
-                Link.TriggerClockDrivenImplementations();
-                // PPU step dot
-                if (virtualTime % 3 is 0) {
-                    Step();
-                    if (Quit) return;
-                    // APU step cycle
+        const double fps = 60.0988d;
+        var frameTimeSeconds = 1.0 / fps;
+
+        var freq = Stopwatch.Frequency;
+
+        long frameDeadlineTick = 0;
+        var lastThrottle = float.NaN;
+
+        ulong frames = 0, lateFrames = 0;
+        long nextPrint = 0;
+        double worstLateMs = 0;
+
+        while (!Quit) {
+            Link.TriggerClockDrivenImplementations();
+
+            if (virtualTime % 3 is 0) {
+                Step();
+                if (Quit) return;
+            }
+
+            if (virtualTime % DOTS_PER_FRAME is 0 && Throttle > 0f) {
+                var frameStartTick = Stopwatch.GetTimestamp();
+
+                var effectiveFrameSeconds = frameTimeSeconds / Throttle;
+                var frameTicks = (long)(effectiveFrameSeconds * freq);
+                if (frameTicks < 1) frameTicks = 1;
+
+                if (frameDeadlineTick == 0 || Throttle != lastThrottle) {
+                    lastThrottle = Throttle;
+                    frameDeadlineTick = frameStartTick + frameTicks;
                 }
 
-                if (virtualTime % DOTS_PER_FRAME is 0) {
-                    if (Throttle > 0f) {
-                        Renderer.Present();
-                    
-                        var effectiveFrameTime = frameTime / Throttle;
-                        var now                = sw.Elapsed.TotalSeconds;
-                        var remaining          = nextFrameDeadLine - now;
+                Renderer.Present();
 
-                        if (remaining < 0) {
-                            if (Program.Config.Strict) {
-                                Console.WriteLine("[CPU] Unable to compute in time");
-                                Quit = true;
-                                return;  
-                            } 
-                            
-                            Console.WriteLine($"[CPU] Program is running behind schedule {MathF.Abs((float)remaining)}s");
-                            nextFrameDeadLine += effectiveFrameTime;
-                        } else {
-                            Console.WriteLine($"[CPU] Ahead of Schedule by {remaining}");
-                            Thread.Sleep(TimeSpan.FromSeconds(remaining));
-                            nextFrameDeadLine += effectiveFrameTime;
-                        }    
+                var workEndTick = Stopwatch.GetTimestamp();
+
+                if (workEndTick > frameDeadlineTick) {
+                    lateFrames++;
+
+                    var lateMs = (workEndTick - frameDeadlineTick) * 1000.0 / freq;
+                    if (lateMs > worstLateMs) worstLateMs = lateMs;
+
+                    if (Program.Config.Strict) {
+                        Console.WriteLine("[CPU] Unable to compute in time");
+                        Quit = true;
+                        return;
+                    }
+
+                    var behindTicks = workEndTick - frameDeadlineTick;
+                    var missed = (behindTicks / frameTicks) + 1;   // number of boundaries missed
+                    frameDeadlineTick += missed * frameTicks;
+                } else {
+                    while (Stopwatch.GetTimestamp() < frameDeadlineTick) {
+                        Thread.Yield();
+                    }
+
+                    frameDeadlineTick += frameTicks;
+
+                    var afterWait = Stopwatch.GetTimestamp();
+                    if (afterWait > frameDeadlineTick) {
+                        frameDeadlineTick = afterWait + frameTicks;
                     }
                 }
-           
-                ++virtualTime;
+
+                frames++;
+
+                var now = Stopwatch.GetTimestamp();
+                if (nextPrint == 0) nextPrint = now + freq;
+                if (now >= nextPrint) {
+                    Console.WriteLine($"[CPU] thr={Throttle:0.###} fps={(frames):0} late={lateFrames} worstLateMs={worstLateMs:0.###}");
+                    frames = 0;
+                    lateFrames = 0;
+                    worstLateMs = 0;
+                    do nextPrint += freq; while (nextPrint <= now);
+                }
             }
+
+            ++virtualTime;
         }
+    }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void Step() {
-            if (cycle is 0) {
-                if (Reset) {
-                    Console.WriteLine("[CPU] Resetting CPU");
-                    OpHandle = StepReset;
-                    goto HandleInstruction;
-                }
-                
-                if (NMIPending) {
-                    Vector   = Vectors.NMI;
-                    OpHandle = Interrupt;
-                    goto HandleInstruction;
-                }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Step() {
+        if (cycle is 0) {
+            if (Reset) {
+                Console.WriteLine("[CPU] Resetting CPU");
+                OpHandle = StepReset;
+                goto HandleInstruction;
+            }
+            
+            if (NMIPending) {
+                Vector   = Vectors.NMI;
+                OpHandle = Interrupt;
+                goto HandleInstruction;
+            }
 
-                if (IRQPending) {
-                    if (Register.i) goto HandleInstruction;;
+            if (IRQPending) {
+                if (Register.i) goto HandleInstruction;;
 
-                    Vector   = Vectors.IRQ;
-                    OpHandle = Interrupt;
-                    goto HandleInstruction;
-                }
-                
-                AD          = PC;
+                Vector   = Vectors.IRQ;
+                OpHandle = Interrupt;
+                goto HandleInstruction;
+            }
+            
+            AD          = PC;
+            DriveAddressPins();
+            
+            Memory.Read();
+            PC++;
+            Register.IR = Data;
+            OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
+            cycle++;
+            return;
+        }
+        
+        HandleInstruction:
+            OpHandle();
+            cycle++;
+    }
+
+    private static void StepReset() {
+        #if DEBUG
+        Console.WriteLine($"Resetting CPU : {cycle} / 6");
+        #endif
+        switch (cycle) {
+            case 0:
+                AD = PC;
                 DriveAddressPins();
-                
                 Memory.Read();
-                PC++;
-                Register.IR = Data;
-                OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
-                cycle++;
+                break;
+            
+            
+            case 1:
+                ADL = 0x01;
+                ADH = Register.S;
+                DriveAddressPins();
+                Memory.Read();
+                Register.S--;
+                break;
+            
+            case 2:
+                ADL = 0x01;
+                ADH = Register.S;
+                DriveAddressPins();
+                Memory.Read();
+                Register.S--;
+                break;
+            
+            case 3:
+                ADL = 0x01;
+                ADH = Register.S;
+                DriveAddressPins();
+                Memory.Read();
+                Register.S--;
+                Register.i = true;
+                break;
+            
+            case 4:
+                AD = 0xfffc;
+                DriveAddressPins();
+                Memory.Read();
+                DB = Data;
+                break;
+            
+            case 5:
+                AD = 0xfffd;
+                DriveAddressPins();
+                Memory.Read();
+                PCL   = DB;
+                PCH   = Data;
+                cycle = 0xff;
+                Reset = false;
+                break;
+            
+            default:
+                Console.WriteLine("[CPU] StepReset on incorrect cycle");
+                Quit = true;
+                break;
+        }
+    }
+
+    private static void Interrupt() {
+        switch (cycle) {
+            case 0:
+                AD        = PC;
+                DriveAddressPins();
+                Memory.Read();
                 return;
-            }
             
-            HandleInstruction:
-                OpHandle();
-                cycle++;
-        }
-
-        private static void StepReset() {
-            #if DEBUG
-            Console.WriteLine($"Resetting CPU : {cycle} / 6");
-            #endif
-            switch (cycle) {
-                case 0:
-                    AD = PC;
-                    DriveAddressPins();
-                    Memory.Read();
-                    break;
-                
-                
-                case 1:
-                    ADL = 0x01;
-                    ADH = Register.S;
-                    DriveAddressPins();
-                    Memory.Read();
-                    Register.S--;
-                    break;
-                
-                case 2:
-                    ADL = 0x01;
-                    ADH = Register.S;
-                    DriveAddressPins();
-                    Memory.Read();
-                    Register.S--;
-                    break;
-                
-                case 3:
-                    ADL = 0x01;
-                    ADH = Register.S;
-                    DriveAddressPins();
-                    Memory.Read();
-                    Register.S--;
-                    Register.i = true;
-                    break;
-                
-                case 4:
-                    AD = 0xfffc;
-                    DriveAddressPins();
-                    Memory.Read();
-                    DB = Data;
-                    break;
-                
-                case 5:
-                    AD = 0xfffd;
-                    DriveAddressPins();
-                    Memory.Read();
-                    PCL   = DB;
-                    PCH   = Data;
-                    cycle = 0xff;
-                    Reset = false;
-                    break;
-                
-                default:
-                    Console.WriteLine("[CPU] StepReset on incorrect cycle");
-                    Quit = true;
-                    break;
-            }
-        }
-
-        private static void Interrupt() {
-            switch (cycle) {
-                case 0:
-                    AD        = PC;
-                    DriveAddressPins();
-                    Memory.Read();
-                    return;
-                
-                
-                case 1:
-                    Data = PCH;
-                    Memory.Push();
-                    break;
-                
-                case 2:
-                    Data = PCL;
-                    Memory.Push();
-                    break;
-                
-                case 3:
-                    Data =
-                        (byte)((Register.c ? 1 : 0) << 0 |
-                               (Register.z ? 1 : 0) << 1 |
-                               (Register.i ? 1 : 0) << 2 |
-                               (Register.d ? 1 : 0) << 3 |
-                               (0 << 4)                  |
-                               (1 << 5)                  |
-                               (Register.v ? 1 : 0) << 6 |
-                               (Register.n ? 1 : 0) << 7);
-                    Memory.Push();
-                    Register.i = true;
-                    break;
-                
-                case 4:
-                    AD = Vector;
-                    DriveAddressPins();
-                    Memory.Read();
-                    DB  = Data;
-                    PCL = DB;
-                    break;
-                
-                case 5:
-                    AD = (ushort)(Vector + 1);
-                    DriveAddressPins();
-                    Memory.Read();
-                    PCL = DB;
-                    break;
-                
-                default:
-                    Console.WriteLine("[CPU] StepIRQ on incorrect cycle");
-                    Quit = true;
-                    break;
-            }
-        }
-
-
-        private  static ushort Vector;
-        internal static bool   IRQPending;
-        private  static bool   NMIPending;
-        private static  bool   Reset;
-        
-        private static  Action OpHandle;
-        internal static byte   cycle;
-
-        internal static ushort Address;
-        internal static byte   Data;
-        internal static byte   DB;
-        internal static byte   PCL;
-        internal static byte   PCH;
-        internal static byte   ADL;
-        internal static byte   ADH;
-
-        internal static ushort AD {
-            get => (ushort)((ADH << 8) | ADL);
-            set {
-                ADH = (byte)(value >> 8);
-                ADL = (byte)(value & 0xff);
-            }
-        }
-        
-        internal static ushort PC {
-            get => (ushort)((PCH << 8) | PCL);
-            set {
-                PCH = (byte)(value >> 8);
-                PCL = (byte)(value & 0xff);
-            }
-        }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static void DriveAddressPins()
-        {
-            Address = (ushort)((ADH << 8) | ADL);
-        }
-        
-        internal static class Register {
-            // Registers
-            internal static byte IR = 0x00; // instruction register (stores the current operation code)
-            internal static byte X  = 0x00;
-            internal static byte Y  = 0x00; // index registers
-            internal static byte S  = 0x00; // stack pointer
-            internal static byte AC = 0x00; // accumulator
             
-            // flags
-            internal static bool c = false;
-            internal static bool z = false;
-            internal static bool i = false;
-            internal static bool d = false;
-            internal static bool b = false;
-            internal static bool v = false;
-            internal static bool n = false;
+            case 1:
+                Data = PCH;
+                Memory.Push();
+                break;
+            
+            case 2:
+                Data = PCL;
+                Memory.Push();
+                break;
+            
+            case 3:
+                Data =
+                    (byte)((Register.c ? 1 : 0) << 0 |
+                           (Register.z ? 1 : 0) << 1 |
+                           (Register.i ? 1 : 0) << 2 |
+                           (Register.d ? 1 : 0) << 3 |
+                           (0 << 4)                  |
+                           (1 << 5)                  |
+                           (Register.v ? 1 : 0) << 6 |
+                           (Register.n ? 1 : 0) << 7);
+                Memory.Push();
+                Register.i = true;
+                break;
+            
+            case 4:
+                AD = Vector;
+                DriveAddressPins();
+                Memory.Read();
+                DB  = Data;
+                PCL = DB;
+                break;
+            
+            case 5:
+                AD = (ushort)(Vector + 1);
+                DriveAddressPins();
+                Memory.Read();
+                PCL = DB;
+                break;
+            
+            default:
+                Console.WriteLine("[CPU] StepIRQ on incorrect cycle");
+                Quit = true;
+                break;
         }
+    }
 
-        internal static class Vectors {
-            internal const ushort NMI   = 0xfffa;
-            internal const ushort Reset = 0xfffc;
-            internal const ushort IRQ   = 0xfffe;
+
+    private  static ushort Vector;
+    internal static bool   IRQPending;
+    private  static bool   NMIPending;
+    private static  bool   Reset;
+    
+    private static  Action OpHandle;
+    internal static byte   cycle;
+
+    internal static ushort Address;
+    internal static byte   Data;
+    internal static byte   DB;
+    internal static byte   PCL;
+    internal static byte   PCH;
+    internal static byte   ADL;
+    internal static byte   ADH;
+
+    internal static ushort AD {
+        get => (ushort)((ADH << 8) | ADL);
+        set {
+            ADH = (byte)(value >> 8);
+            ADL = (byte)(value & 0xff);
         }
+    }
+    
+    internal static ushort PC {
+        get => (ushort)((PCH << 8) | PCL);
+        set {
+            PCH = (byte)(value >> 8);
+            PCL = (byte)(value & 0xff);
+        }
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void DriveAddressPins()
+    {
+        Address = (ushort)((ADH << 8) | ADL);
+    }
+    
+    internal static class Register {
+        // Registers
+        internal static byte IR = 0x00; // instruction register (stores the current operation code)
+        internal static byte X  = 0x00;
+        internal static byte Y  = 0x00; // index registers
+        internal static byte S  = 0x00; // stack pointer
+        internal static byte AC = 0x00; // accumulator
+        
+        // flags
+        internal static bool c = false;
+        internal static bool z = false;
+        internal static bool i = false;
+        internal static bool d = false;
+        internal static bool b = false;
+        internal static bool v = false;
+        internal static bool n = false;
+    }
 
-        private const ulong BaseClockSpeed = 1_789_773ul;
+    internal static class Vectors {
+        internal const ushort NMI   = 0xfffa;
+        internal const ushort Reset = 0xfffc;
+        internal const ushort IRQ   = 0xfffe;
+    }
+
+    private const ulong BaseClockSpeed = 1_789_773ul;
 
     private  const  double SECONDS_PER_FRAME  = 0d;
     internal static float  Throttle           = float.NegativeInfinity;

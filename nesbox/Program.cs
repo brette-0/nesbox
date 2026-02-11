@@ -1,5 +1,6 @@
 ﻿namespace nesbox;
 
+using NAudio.Wave;
 using EList;
 
 internal static class Program {
@@ -53,6 +54,20 @@ internal static class Program {
                     break;
             }
         }
+        var provider = new Audio.SineWaveProvider16(sampleRate: 48000, channels: 2)
+        {
+            FrequencyHz = 440.0,
+            Volume      = 0.2f
+        };
+
+        using var output = new WaveOutEvent
+        {
+            DesiredLatency  = 80, // ms; lower = tighter but riskier
+            NumberOfBuffers = 3   // more buffers = safer, slightly more latency
+        };
+
+        output.Init(provider);
+        output.Play();
         
         Implementation.Initialize(next); if (System.Quit) {
             return;

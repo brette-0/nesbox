@@ -17,11 +17,11 @@ internal static class OpCodes {
         u = 16      // check unset
     }
 
-    internal unsafe struct Opcode {
+    private unsafe struct Opcode {
         internal delegate*<void> ptr;
         internal RWKind          kind;
 
-        internal unsafe Opcode(delegate*<void> ptr, RWKind kind) {
+        internal Opcode(delegate*<void> ptr, RWKind kind) {
             this.ptr = ptr;
             this.kind = kind;
         }
@@ -38,7 +38,36 @@ internal static class OpCodes {
         /* 05 ora d    */ () => DirectPage(ORA),
         /* 06 asl d    */ () => DirectPage(ASL),
         /* 07 slo d    */ () => DirectPage(SLO),
-        /* 08 php       */ () => throw new NotImplementedException("Please write this instruction"),
+        /* 08 php       */ () => {
+            switch (cycle) {
+                case 1:
+                    AD = PC;
+                    DriveAddressPins();
+                    Memory.Read();
+                    break;
+                
+                case 2:
+                    Data = (byte)(
+                        ((Register.c ? 1 : 0) << 0) |
+                        ((Register.z ? 1 : 0) << 1) |
+                        ((Register.i ? 1 : 0) << 2) |
+                        ((Register.d ? 1 : 0) << 3) |
+                        ((Register.b ? 1 : 0) << 4) |
+                        (1                    << 5) |
+                        ((Register.v ? 1 : 0) << 6) |
+                        ((Register.n ? 1 : 0) << 7)
+                    );
+                    
+                    Memory.Push();
+                    cycle = 0xff;
+                    break;
+                
+                default:
+                    Console.WriteLine("[CPU] Performed PHP on incorrect cycle");
+                    Quit = true;
+                    break;
+            }
+        },
         /* 09 ora #imm  */ () => Immediate(ORA),
         /* 0a asl       */ ASLA,
         /* 0b anc #imm  */ () => Immediate(ANC),
@@ -80,7 +109,46 @@ internal static class OpCodes {
         /* 25 and d   */ () => DirectPage(AND),
         /* 26 rol d   */ () => DirectPage(ROL),
         /* 27 rla d   */ () => DirectPage(RLA),
-        /* 28 plp     */ () => throw new NotImplementedException("Please write this instruction"),
+        /* 28 plp     */ () => {
+            switch (cycle) {
+                case 1:
+                    AD = PC;
+                    DriveAddressPins();
+                    Memory.Read();
+                    break;
+                
+                case 2:
+                    ADL = Register.S;
+                    ADH = 0x01;
+                    DriveAddressPins();
+                    Memory.Read();
+                    break;
+                
+                case 3:
+                    Register.S++;
+                    ADL = Register.S;
+                    ADH = 0x01;
+                    DriveAddressPins();
+                    Memory.Read();
+                    
+                    Register.c = (Data & 0x01) != 0;
+                    Register.z = (Data & 0x02) != 0;
+                    Register.i = (Data & 0x04) != 0;
+                    Register.d = (Data & 0x08) != 0;
+
+                    Register.b = false;
+
+                    Register.v = (Data & 0x40) != 0;
+                    Register.n = (Data & 0x80) != 0;
+                    cycle      = 0xff;
+                    break;
+                
+                default:
+                    Console.WriteLine("[CPU] Performed PLP on incorrect cycle");
+                    Quit = true;
+                    break;
+            }
+        },
         /* 29 and #   */ () => Immediate(AND),
         /* 2a rol     */ ROLA,
         /* 2b anc     */ () => Immediate(ANC),

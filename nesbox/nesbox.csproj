@@ -17,6 +17,7 @@
 
     <ItemGroup>
       <PackageReference Include="EList" Version="1.0.1" />
+      <PackageReference Include="NAudio" Version="2.2.1" />
       <PackageReference Include="SDL3-CS" Version="3.3.2.1" />
       <PackageReference Include="Vortice.XInput" Version="3.8.2" />
     </ItemGroup>

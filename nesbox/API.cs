@@ -86,5 +86,17 @@ internal static class API {
         
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
+        
+        public bool EXPO { get; set; }
+        public bool EXP1 { get; set; }
+        public bool EXP2 { get; set; }
+        public bool EXP3 { get; set; }
+        public bool EXP4 { get; set; }
+        public bool EXP5 { get; set; }
+        public bool EXP6 { get; set; }
+        public bool EXP7 { get; set; }
+        public bool EXP8 { get; set; }
+        public bool EXP9 { get; set; }
+
     }
 }
