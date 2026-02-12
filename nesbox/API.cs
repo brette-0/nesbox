@@ -84,6 +84,8 @@ internal static class API {
         /// <returns></returns>
         [Pure] public byte CPUReadByte();
         
+        [Pure] public byte ReadByte(ushort address);
+        
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
         

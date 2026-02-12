@@ -43,7 +43,7 @@ internal static class OpCodes {
                 case 1:
                     AD = PC;
                     DriveAddressPins();
-                    Memory.Read();
+                    Memory.CPU_Read();
                     break;
                 
                 case 2:
@@ -114,14 +114,14 @@ internal static class OpCodes {
                 case 1:
                     AD = PC;
                     DriveAddressPins();
-                    Memory.Read();
+                    Memory.CPU_Read();
                     break;
                 
                 case 2:
                     ADL = Register.S;
                     ADH = 0x01;
                     DriveAddressPins();
-                    Memory.Read();
+                    Memory.CPU_Read();
                     break;
                 
                 case 3:
@@ -129,7 +129,7 @@ internal static class OpCodes {
                     ADL = Register.S;
                     ADH = 0x01;
                     DriveAddressPins();
-                    Memory.Read();
+                    Memory.CPU_Read();
                     
                     Register.c = (Data & 0x01) != 0;
                     Register.z = (Data & 0x02) != 0;
@@ -454,7 +454,7 @@ internal static class OpCodes {
                 ADL = (byte)(PC & 0xFF);
                 ADH = (byte)(PC >> 8);
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC++;
                 break;
@@ -490,7 +490,7 @@ internal static class OpCodes {
                 ADL = 0xFE;
                 ADH = 0xFF;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 DB = Data;
                 break;
@@ -499,7 +499,7 @@ internal static class OpCodes {
                 ADL = 0xFF;
                 ADH = 0xFF;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC    = (ushort)((Data << 8) | DB);
                 cycle = 0xff;
@@ -523,7 +523,7 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
 
                 DB = Data;
                 PC++;
@@ -533,7 +533,7 @@ internal static class OpCodes {
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
 
             case 3:
@@ -548,7 +548,7 @@ internal static class OpCodes {
 
             case 5:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PCH   = Data;
                 PCL   = DB;
@@ -574,7 +574,7 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
 
             case 2:
@@ -582,7 +582,7 @@ internal static class OpCodes {
                 ADL = ++Register.S;
                     
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 var p = Data;
 
@@ -603,7 +603,7 @@ internal static class OpCodes {
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 DB = Data;
                 break;
@@ -613,7 +613,7 @@ internal static class OpCodes {
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                     
                 PCH = Data;
                 PCL = DB;
@@ -621,7 +621,7 @@ internal static class OpCodes {
 
             case 5:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
 
                 cycle = 0xff;
                 break;
@@ -645,7 +645,7 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADL = Data;
                 PC++;
@@ -653,7 +653,7 @@ internal static class OpCodes {
 
             case 2:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADH = Data;
                 DriveAddressPins();
@@ -681,14 +681,14 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
 
             case 2:
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
 
             case 3:
@@ -696,7 +696,7 @@ internal static class OpCodes {
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC = (ushort)((Data << 8) | DB);
                 break;
@@ -706,7 +706,7 @@ internal static class OpCodes {
                 ADL = Register.S;
                 ADH = 0x01;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 PCL = DB;
                 PCH = Data;
                 break;
@@ -717,7 +717,7 @@ internal static class OpCodes {
 
             case 6:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 cycle = 0xff;
                 break;
 
@@ -742,7 +742,7 @@ internal static class OpCodes {
                 ADL = (byte)(PC & 0xFF);
                 ADH = (byte)(PC >> 8);
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADL = Data;
                 PC++;
@@ -757,7 +757,7 @@ internal static class OpCodes {
                 ADL = PCL;
                 ADH = PCH;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADL = ptrLow;
                 ADH = Data;
@@ -767,7 +767,7 @@ internal static class OpCodes {
 
             case 3:
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 DB = Data;
                 break;
@@ -776,7 +776,7 @@ internal static class OpCodes {
                 ADL = (byte)(ADL + 1);
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC    = (ushort)((Data << 8) | DB);
                 cycle = 0xff;
@@ -889,7 +889,7 @@ internal static class OpCodes {
                 ADL = (byte)(PC & 0xFF);
                 ADH = (byte)(PC >> 8);
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 DB = Data;
                 PC++;
@@ -904,7 +904,7 @@ internal static class OpCodes {
                 ADL = (byte)(PC & 0xFF);
                 ADH = (byte)(PC >> 8);
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
 
             case 3:
@@ -915,7 +915,7 @@ internal static class OpCodes {
                 ADH = PCH;
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC = (ushort)((PC & 0xFF00) | ADL);
 
@@ -925,7 +925,7 @@ internal static class OpCodes {
             case 4:
                 ADH++;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 PC    = (ushort)((ADH << 8) | ADL);
                 cycle = 0xff;
@@ -1295,7 +1295,7 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 ADL  = Data;
                 PC++;
@@ -1303,7 +1303,7 @@ internal static class OpCodes {
             
             case 2:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 ADH = Data;
                 PC++;
                 break;
@@ -1313,7 +1313,7 @@ internal static class OpCodes {
                 ADL  = (byte)sum;
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 switch (op.kind) {
                     case RWKind.Write:
@@ -1337,12 +1337,12 @@ internal static class OpCodes {
                     case RWKind.Write: goto complete;
                     case RWKind.Read:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         goto complete;
                     
                     case RWKind.RMW:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         break;
                     
                     default:
@@ -1354,7 +1354,7 @@ internal static class OpCodes {
             case 5: 
                 if (op.kind is RWKind.RMW) goto complete;
                 DriveAddressPins();
-                Memory.Write();
+                Memory.CPU_Write();
                 break;
                 
             case 6: 
@@ -1383,7 +1383,7 @@ internal static class OpCodes {
             case 1:
                 Address = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 DB   = Data;
                 PC++;
@@ -1393,7 +1393,7 @@ internal static class OpCodes {
                 ADL  = DB;
                 ADH  = 0x00;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
 
                 ADL = (byte)(DB + reg);
@@ -1403,14 +1403,14 @@ internal static class OpCodes {
                 switch (op.kind) {
                     case RWKind.Read:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         goto complete;
                         
                     case RWKind.Write: goto complete;
                         
                     case RWKind.RMW:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         break;
                     
                     default:
@@ -1422,7 +1422,7 @@ internal static class OpCodes {
             case 4:
                 if (op.kind is not RWKind.RMW) goto default;
                 DriveAddressPins();
-                Memory.Write();
+                Memory.CPU_Write();
                 break;
             
             case 5:
@@ -1451,7 +1451,7 @@ internal static class OpCodes {
             case 1:
                 Address = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 ADL  = Data;
                 PC++;
@@ -1459,7 +1459,7 @@ internal static class OpCodes {
             
             case 2:
                 Address = ++PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 ADH  = Data;
                 PC++;
@@ -1467,7 +1467,7 @@ internal static class OpCodes {
             
             case 3:
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 if (op.kind is RWKind.RMW) break;
                 goto complete;
@@ -1475,7 +1475,7 @@ internal static class OpCodes {
             case 4:
                 if (op.kind is not RWKind.RMW) goto default;
                 DriveAddressPins();
-                Memory.Write();
+                Memory.CPU_Write();
                 break;
             
             case 5:
@@ -1500,7 +1500,7 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void EndRest() {
         DriveAddressPins();
-        Memory.Write();
+        Memory.CPU_Write();
         cycle = 0xff;
     }
 
@@ -1512,7 +1512,7 @@ internal static class OpCodes {
         switch (cycle) {
             case 1:
                 Address = PC;
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 ADL = Data;
                 ADH = 0x00;
@@ -1521,7 +1521,7 @@ internal static class OpCodes {
             
             case 2:
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 switch (op.kind) {
                     case RWKind.Read:  goto complete;
@@ -1554,7 +1554,7 @@ internal static class OpCodes {
                 ADH = PCH;
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 PC++;
                 op.ptr();
                 cycle = 0xff;
@@ -1576,14 +1576,14 @@ internal static class OpCodes {
             case 1:
                 Address = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 DB = Data;                
                 PC++;
                 break;
 
             case 2:
                 Address = DB;
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 ADL     = Data;
                 break;
@@ -1593,7 +1593,7 @@ internal static class OpCodes {
                 ADH = Data;
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 ADH  = Data;
                 break;
 
@@ -1602,7 +1602,7 @@ internal static class OpCodes {
                 ADL         = (byte)sum;
 
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
 
                 switch (op.kind) {
                     case RWKind.Write:
@@ -1624,12 +1624,12 @@ internal static class OpCodes {
                     case RWKind.Write: goto complete;
                     case RWKind.RMW:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         break;
                     
                     case RWKind.Read:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         goto complete;
                         
                     default: throw new ArgumentException();    
@@ -1640,7 +1640,7 @@ internal static class OpCodes {
              case 6:
                  if (op.kind is not RWKind.RMW) goto default;
                  DriveAddressPins();
-                 Memory.Write();
+                 Memory.CPU_Write();
                  break;
              
              case 7:
@@ -1667,7 +1667,7 @@ internal static class OpCodes {
             case 1:
                 Address = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 
                 DB   = Data;
                 PC++;
@@ -1675,19 +1675,19 @@ internal static class OpCodes {
                 
             case 2:
                 Address = DB;
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
                 
             case 3:
                 Address = (byte)(DB + Register.X);
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADH = Data;
                 break;
                 
             case 4:
                 Address  = (byte)(DB + Register.X + 1);
-                Memory.Read();
+                Memory.CPU_Read();
 
                 ADH  = Data;
                 break;
@@ -1696,7 +1696,7 @@ internal static class OpCodes {
                 switch (op.kind) {
                     case RWKind.RMW:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         break;
                     
                     case RWKind.Write:
@@ -1704,7 +1704,7 @@ internal static class OpCodes {
                         
                     case RWKind.Read:
                         DriveAddressPins();
-                        Memory.Read();
+                        Memory.CPU_Read();
                         goto complete;
                         
                     default: throw new ArgumentOutOfRangeException();
@@ -1715,7 +1715,7 @@ internal static class OpCodes {
             case 6:
                 if (op.kind is not RWKind.RMW) goto default;
                 DriveAddressPins();
-                Memory.Write();
+                Memory.CPU_Write();
                 break;
             
             case 7:

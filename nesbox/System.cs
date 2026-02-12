@@ -1,9 +1,443 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Threading.Channels;
+using NAudio.Wave.SampleProviders;
 using nesbox.CPU;
 namespace nesbox;
 
 internal static class System {
+    internal static class APU {
+        internal static void Step() {
+            _clockFlipFlop ^= true;
+
+            switch (_resetFrameCounter) {
+                case > 4:
+                    break;
+                
+                case 0:
+                    _resetFrameCounter = 0xff;
+                    _frameCounter      = 0;
+                    if (UsingFiveStep) {
+                        Pulse1.QuarterFrame();
+                        Pulse2.QuarterFrame();
+                        Pulse1.HalfFrame();
+                        Pulse2.HalfFrame();
+                        Triangle.QuarterFrame();
+                        Triangle.HalfFrame();
+                    }
+                    break;
+                
+                default:
+                    _resetFrameCounter--;
+                    break;
+            }
+
+            switch (++_frameCounter) {
+                case S1:
+                case S1 + S2:
+                    Pulse1.QuarterFrame();
+                    Pulse2.QuarterFrame();
+                    Triangle.QuarterFrame();
+                    break;
+                
+                case S2:
+                    Pulse1.HalfFrame();
+                    Pulse2.HalfFrame();
+                    Triangle.HalfFrame();
+                    goto case S1;
+                    
+                case S4:
+                    if (UsingFiveStep) break;
+                    _frameCounter = 0;
+                    // consider IRQ
+                    goto case S2;
+                    
+               case S5:
+                   if (!UsingFiveStep) break;
+                   _frameCounter = 0;
+                   // consider IRQ
+                   goto case S2;
+            }
+            
+            Pulse1.Step();
+            Pulse2.Step();
+            Triangle.Step();
+            Noise.Step();
+            PCM.Step();
+        }
+
+
+
+
+        internal static class PCM {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void Step() {
+
+            }
+            
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void QuarterFrame() {
+                
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void HalfFrame() {
+                
+            }
+
+
+            internal static bool enabled;
+        }
+        
+        internal static class Noise {
+            private static readonly ushort[] PeriodTable = {
+                4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
+            };
+            
+            private static readonly byte[] lengthTable = {
+                10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,
+                12,16,24,18,48,20,96,22,192,24,72,26,16,28,32,30
+            };
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void Step() {
+                if (!_clockFlipFlop || !enabled) return;
+
+                if (timerCounter is 0) {
+                    timerCounter = PeriodTable[periodIndex];
+
+                    var bit0     = (ushort)( lfsr                    & 1);
+                    var tap      = (ushort)((lfsr >> (mode ? 6 : 1)) & 1);
+                    var feedback = (ushort)(bit0 ^ tap);
+
+                    lfsr >>= 1;
+                    lfsr |= (ushort)(feedback << 14);
+                } else timerCounter--;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void QuarterFrame() {
+                if (envStart) {
+                    envStart   = false;
+                    envDecay   = 15;
+                    envDivider = Volume;
+                    return;
+                }
+
+                if (envDivider is 0) {
+                    envDivider = Volume;
+                    if (envDecay > 0) envDecay--;
+                    else if (Halt) envDecay = 15;
+                } else envDivider--;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void HalfFrame() {
+                if (Length > 0 && !Halt) Length--;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400C_Noise() {
+                Halt           = (Data       & 0x20) is 0x20;
+                constantVolume = (Data       & 0x10) is 0x10;
+                Volume         = (byte)(Data & 0x0f);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400E_Noise() {
+                mode        = (Data       & 0x80) is 0x80;
+                periodIndex = (byte)(Data & 0x0f);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400F_Noise() {
+                Length   = enabled ? lengthTable[lengthIndex] : (byte)0;
+                envStart = true;
+            }
+            
+            private static bool   envStart;
+            private static byte   envDivider;
+            private static byte   envDecay;
+            private static bool   mode;
+            private static ushort lfsr;
+            private static byte   periodIndex;
+            private static ushort timerCounter;
+            private static bool   constantVolume;
+            private static byte   lengthIndex;
+            
+            internal static bool enabled;
+            internal static bool Halt;
+            internal static byte Length;
+            internal static byte Volume;
+        }
+
+        internal static class Triangle {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void Step() {
+                if (!enabled) return;
+
+                if (timerCounter is 0) {
+                    timerCounter = Timer;
+
+                    if (Length is not 0 && linearCounter is not 0) {
+                        sequencer = (byte)((sequencer + 1) & 31);
+                    }
+                } else {
+                    timerCounter--;
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void QuarterFrame() {
+                if (linearReloadFlag) linearCounter = reloadValue;
+                else if (linearCounter is not 0) linearCounter--;
+
+                if (!control) linearReloadFlag = false;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void HalfFrame() {
+                if (Length > 0 && !control) Length--;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4008_Triangle() {
+                control     = (Data       & 0x80) is 0x80;
+                reloadValue = (byte)(Data & 0x7f);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400A_Triangle() {
+                Timer &= 0xff00;
+                Timer |= Data;
+            }
+            
+            private static readonly byte[] LengthTable =
+            {
+                10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,
+                12,16,24,18,48,20,96,22,192,24,72,26,16,28,32,30
+            };
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400B_Triangle() {
+                Length =  enabled ? LengthTable[(Data >> 3) & 0x1f] : (byte)0;
+                Timer  &= 0x00ff;
+                Timer  |= (ushort)((Data & 0x07) << 8);
+
+                linearReloadFlag = true;
+            }
+
+
+            private static ushort timerCounter;
+            private static byte   sequencer;
+            private static byte   linearCounter;
+            private static bool   linearReloadFlag;
+            private static bool   control;
+            private static byte   reloadValue;
+            
+            internal static byte   Length;
+            internal static ushort Timer;
+            internal static bool   enabled;
+        }
+        
+        internal class PulseChannel {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void Step() {
+                if (!_clockFlipFlop || !enabled) return;
+
+                if (timerCounter is 0) {
+                    timerCounter = Timer;
+                    seq          = (byte)((seq + 1) & 7);
+                    return;
+                }
+
+                timerCounter--;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void QuarterFrame() {
+                if (envStart) {
+                    envStart   = false;
+                    envDecay   = 15;
+                    envDivider = Volume;
+                    return;
+                }
+
+                if (envDivider is 0) {
+                    envDivider = Volume;
+                    if (envDecay > 0) envDecay--;
+                    else if (Halt) envDecay = 15;
+                } else {
+                    envDivider--;
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void HalfFrame() {
+                if (Length > 0 && !Halt) Length--;
+
+                var divZero = sweepDivider is 0;
+                if (divZero) {
+                    if (SweepEnable && Shift is not 0) {
+                        var target = (ushort)(
+                            Negate
+                                ? this == Pulse1
+                                    ? Timer - (Timer >> Shift) - 1
+                                    : Timer - (Timer >> Shift)
+                                : Timer + (Timer >> Shift)
+                        );
+
+                        if (Timer < 8 || target > 0x7FF) goto sweepReloadCheck;
+                        Timer = target;
+                    }
+                }
+                
+                sweepReloadCheck:
+                if (sweepReload || divZero) {
+                    sweepDivider = Period;
+                    sweepReload  = false;
+                } else {
+                    sweepDivider--;
+                }
+            }
+            
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void W4000_PulseX() {
+                Duty           = (byte)(Data >> 6);
+                Halt           = (Data       & 0x20) is 0x20;
+                ConstantVolume = (Data       & 0x10) is 0x10;
+                Volume         = (byte)(Data & 0x0f);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void W4001_PulseX() {
+                SweepEnable = (Data & 0x80) is 0x80;
+                Period      = (byte)((Data & 0x70) >> 4);
+                Negate      = (Data       & 0x08) is 0x08;
+                Shift       = (byte)(Data & 0x07);
+                sweepReload = true;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void W4002_PulseX() {
+                Timer &= 0xff00;
+                Timer |= Data;
+            }
+
+            private static readonly byte[] LengthTable =
+            {
+                10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,
+                12,16,24,18,48,20,96,22,192,24,72,26,16,28,32,30
+            };
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal void W4003_PulseX() {
+                var lengthIndex = (Data >> 3) & 0x1F;
+                Length = enabled ? LengthTable[lengthIndex] : (byte)0;
+
+                Timer &= 0x00FF;
+                Timer |= (ushort)((Data & 0x07) << 8);
+
+                envStart = true;
+                seq      = 0;
+            }
+            
+            internal bool  enabled;
+            
+            private ushort timerCounter;
+            private byte   seq;
+
+            private bool   envStart;
+            private byte   envDivider;
+            private byte   envDecay;
+
+            private bool   sweepReload;
+            private byte   sweepDivider;
+
+            private  byte   Duty;
+            private  bool   Halt;
+            private  bool   ConstantVolume;
+            private  byte   Volume;
+            private  bool   SweepEnable;
+            private  byte   Period;
+            private  bool   Negate;
+            private  byte   Shift;
+            private  ushort Timer;
+            internal byte   Length;
+        }
+        
+        internal static class Registers {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4000_Pulse1() => Pulse1.W4000_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4004_Pulse2() => Pulse2.W4000_PulseX();
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4001_Pulse1() => Pulse1.W4001_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4005_Pulse2() => Pulse2.W4001_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4002_Pulse1() => Pulse1.W4002_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4006_Pulse2() => Pulse2.W4002_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4003_Pulse1() => Pulse1.W4003_PulseX();
+                
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4007_Pulse2() => Pulse2.W4003_PulseX();
+
+            internal static void W4015_Status() {
+                // DMC.enabled      = (Data & 0x10) is 0x10;
+                // Noise.enabled    = (Data & 0x08) is 0x80;
+                Triangle.enabled = (Data & 0x04) is 0x04;
+                Pulse2.enabled   = (Data & 0x02) is 0x02;
+                Pulse1.enabled   = (Data & 0x01) is 0x01;
+
+                if (!Pulse1.enabled)   Pulse1.Length = 0;
+                if (!Pulse2.enabled)   Pulse2.Length = 0;
+                if (!Triangle.enabled) Triangle.enabled = false;
+            }
+
+            internal static void R4015_Status() {
+                var resp = (byte)(Data & 0xe0); // preserve open bus TODO: make more accurate much later
+                
+                resp |= (byte)(Pulse1.Length   is not 0 ? 0x01 : 0);
+                resp |= (byte)(Pulse2.Length   is not 0 ? 0x02 : 0);
+                resp |= (byte)(Triangle.Length is not 0 ? 0x04 : 0);
+                
+                Data =  resp;
+            }
+
+            internal static void W4017_FrameCounter() {
+                UsingFiveStep = (Data & 0x80) is 0x80;
+                IRQInhibit    = (Data & 0x40) is 0x40;
+
+                _resetFrameCounter = (byte)(_clockFlipFlop ? 4 : 3);
+            }
+        }
+
+        internal static byte _resetFrameCounter;
+        internal static bool UsingFiveStep;
+        internal static bool IRQInhibit;
+
+        private const ushort S1 = 3729;
+        private const ushort S2 = 7457;
+        private const ushort S4 = 14915;
+        private const ushort S5 = 18641;
+        
+
+        
+        private  static bool   _clockFlipFlop;
+        private  static ushort _frameCounter;
+    }
+    
     internal static class Memory {
         private const ushort PPUCTRL   = 0x2000;
         private const ushort PPUMASK   = 0x2001;
@@ -38,9 +472,19 @@ internal static class System {
         private const ushort IODEVICE1        = 0x4016;
         private const ushort IODEVICE2        = 0x4017;
         private const ushort FRAMECOUNTER     = 0x4017;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static byte DMC_Read(ushort address) {
+            
+            #if RELEASE         // if you break anything, this should stop hardware acting impossibly
+            address |= 0xc000;
+            #endif
+
+            return Program.Cartridge.ReadByte(address);
+        }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static void Read() {
+        internal static void CPU_Read() {
             if (Address < 0x2000) {
                 Data = SystemRAM[Address & 0x7ff];
                 goto SendReadToCart;
@@ -100,7 +544,7 @@ internal static class System {
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static void Write() {
+        internal static void CPU_Write() {
             switch (Address) {
                 case < 0x2000:
                     SystemRAM[Address & 0x7ff] = Data;
@@ -162,7 +606,7 @@ internal static class System {
             ADL = s;
             ADH = 0x01;
             DriveAddressPins();
-            Write();
+            CPU_Write();
             s--;
         }
         
@@ -173,7 +617,7 @@ internal static class System {
             ADH = 0x01;
             DriveAddressPins();
             
-            Read();
+            CPU_Read();
             s++;;
         }
 
@@ -250,8 +694,8 @@ internal static class System {
                         return;
                     }
 
-                    var behindTicks = workEndTick - frameDeadlineTick;
-                    var missed = (behindTicks / frameTicks) + 1;   // number of boundaries missed
+                    var behindTicks = workEndTick              - frameDeadlineTick;
+                    var missed      = behindTicks / frameTicks + 1;   // number of boundaries missed
                     frameDeadlineTick += missed * frameTicks;
                 } else {
                     while (Stopwatch.GetTimestamp() < frameDeadlineTick) {
@@ -271,7 +715,7 @@ internal static class System {
                 var now = Stopwatch.GetTimestamp();
                 if (nextPrint == 0) nextPrint = now + freq;
                 if (now >= nextPrint) {
-                    Console.WriteLine($"[CPU] thr={Throttle:0.###} fps={(frames):0} late={lateFrames} worstLateMs={worstLateMs:0.###}");
+                    Console.WriteLine($"[CPU] thr={Throttle:0.###} fps={frames:0} late={lateFrames} worstLateMs={worstLateMs:0.###}");
                     frames = 0;
                     lateFrames = 0;
                     worstLateMs = 0;
@@ -309,7 +753,7 @@ internal static class System {
             AD          = PC;
             DriveAddressPins();
             
-            Memory.Read();
+            Memory.CPU_Read();
             PC++;
             Register.IR = Data;
             OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
@@ -330,7 +774,7 @@ internal static class System {
             case 0:
                 AD = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 break;
             
             
@@ -338,7 +782,7 @@ internal static class System {
                 ADL = 0x01;
                 ADH = Register.S;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 Register.S--;
                 break;
             
@@ -346,7 +790,7 @@ internal static class System {
                 ADL = 0x01;
                 ADH = Register.S;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 Register.S--;
                 break;
             
@@ -354,7 +798,7 @@ internal static class System {
                 ADL = 0x01;
                 ADH = Register.S;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 Register.S--;
                 Register.i = true;
                 break;
@@ -362,14 +806,14 @@ internal static class System {
             case 4:
                 AD = 0xfffc;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 DB = Data;
                 break;
             
             case 5:
                 AD = 0xfffd;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 PCL   = DB;
                 PCH   = Data;
                 cycle = 0xff;
@@ -388,7 +832,7 @@ internal static class System {
             case 0:
                 AD        = PC;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 return;
             
             
@@ -419,7 +863,7 @@ internal static class System {
             case 4:
                 AD = Vector;
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 DB  = Data;
                 PCL = DB;
                 break;
@@ -427,7 +871,7 @@ internal static class System {
             case 5:
                 AD = (ushort)(Vector + 1);
                 DriveAddressPins();
-                Memory.Read();
+                Memory.CPU_Read();
                 PCL = DB;
                 break;
             
@@ -508,4 +952,7 @@ internal static class System {
     internal static ulong  virtualTime        = 0;
     internal static bool   Quit               = false;
 
+
+    internal static APU.PulseChannel Pulse1 = new();
+    internal static APU.PulseChannel Pulse2 = new();
 }

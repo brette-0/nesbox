@@ -92,8 +92,9 @@ internal sealed class NROM : API.ICartridge {
             return;
         }
 
-        if (ProgramROM.Length < 0x8000) CPUReadByteTask = (self) => self.SmallProgramCPUReadByte();
-        
+        if (ProgramROM.Length < 0x8000) CPUReadByteTask = (self)          => self.SmallProgramCPUReadByte();
+        if (ProgramROM.Length < 0x8000) ReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
+
         args = next;
     }
     
@@ -108,7 +109,8 @@ internal sealed class NROM : API.ICartridge {
         throw new NotImplementedException();
     }
 
-    public byte CPUReadByte() => CPUReadByteTask(this);
+    public byte ReadByte(ushort address) => ReadByteTask(this, address);
+    public byte CPUReadByte()            => CPUReadByteTask(this);
 
     public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
     public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value ; }
@@ -127,7 +129,8 @@ internal sealed class NROM : API.ICartridge {
     private byte[] __CharacterROM = [];
 
     #region CPUReadByte
-    private Func<NROM, byte> CPUReadByteTask = (self) => self.StandardProgramCPUReadByte();
+    private Func<NROM, byte> CPUReadByteTask      = (self)          => self.StandardProgramCPUReadByte();
+    private Func<NROM, ushort, byte> ReadByteTask = (self, address) => self.StandardProgramReadByte(address);
     
     private byte SmallProgramCPUReadByte() => System.Address switch {
         < 0x8000                           => (byte)(System.Address >> 8),
@@ -137,6 +140,16 @@ internal sealed class NROM : API.ICartridge {
     private byte StandardProgramCPUReadByte() => System.Address switch {
         < 0x8000 => (byte)(System.Address >> 8),
         _        => ProgramROM[System.Address]
+    };
+    
+    private byte SmallProgramReadByte(ushort address) => address switch {
+        < 0x8000 => (byte)(address >> 8),
+        _        => ProgramROM[address & (ProgramROM.Length - 1)]
+    };
+    
+    private byte StandardProgramReadByte(ushort address) => address switch {
+        < 0x8000 => (byte)(address >> 8),
+        _        => ProgramROM[address]
     };
     #endregion CPUReadByte
     
