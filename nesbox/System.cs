@@ -38,12 +38,14 @@ internal static class System {
                     Pulse1.QuarterFrame();
                     Pulse2.QuarterFrame();
                     Triangle.QuarterFrame();
+                    Noise.QuarterFrame();
                     break;
                 
                 case S2:
                     Pulse1.HalfFrame();
                     Pulse2.HalfFrame();
                     Triangle.HalfFrame();
+                    Noise.HalfFrame();
                     goto case S1;
                     
                 case S4:
@@ -66,28 +68,104 @@ internal static class System {
             PCM.Step();
         }
 
-
-
-
         internal static class PCM {
+            private static readonly ushort[] rateTable = {
+                0x01AC, 0x017C, 0x0154, 0x0140,
+                0x011E, 0x00FE, 0x00E2, 0x00D6,
+                0x00BE, 0x00A0, 0x008E, 0x0080,
+                0x006A, 0x0054, 0x0048, 0x0036
+            };
+            
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void Step() {
-
-            }
-            
-            
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            internal static void QuarterFrame() {
+                if (!enabled) return;
                 
+                // work
+                if (timerCounter is not 0) {
+                    timerCounter--;
+                    return;
+                }
+
+                timerCounter = rateTable[rateIndex];
+
+                if (!Silence) {
+                    switch ((shiftReg & 1) is not 0, outputLevel) {
+                        case (true,  < 126): outputLevel += 2; break;
+                        case (false, > 1):   outputLevel -= 2; break;
+                    }
+                }
+
+                shiftReg >>= 1;
+
+                if (bitsRemaining is 0) {
+                    bitsRemaining = 7;
+
+                    if (bufferEmpty) {
+                        Silence = true;
+                    } else {
+                        Silence     = false; // TODO: check what sets this, seems sub-optimal
+                        shiftReg    = sampleBuffer;
+                        bufferEmpty = true;
+                    }
+                } else bitsRemaining--;
+
+                if (!bufferEmpty || bytesRemaining is 0) return;
+                sampleBuffer = Memory.DMC_Read(currentAddress);
+                bufferEmpty  = false;
+
+                currentAddress = (ushort)(++currentAddress | 0x8000);
+                bytesRemaining--;
+
+                if (bytesRemaining is not 0) return;
+                if (Loop) {
+                    currentAddress = SampleAddress;
+                    bytesRemaining = SampleLength;
+                } else if (DMC_IRQ_Enabled) {
+                    // do IRQ
+                }
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            internal static void HalfFrame() {
-                
+            internal static void W4010_DMC() {
+                DMC_IRQ_Enabled = (Data       & 0x80) is 0x80;
+                Loop            = (Data       & 0x40) is 0x40;
+                rateIndex       = (byte)(Data & 0x0f);
+                if (DMC_IRQ_Enabled) {
+                    // Supress IRQ
+                }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4011_DMC() {
+                outputLevel = (byte)(Data & 0x7f);
+            }
 
-            internal static bool enabled;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4012_DMC() {
+                SampleAddress = (ushort)(0xc000 | (Data << 6));
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4013_DMC() {
+                SampleLength = (ushort)((Data << 4) | 1);
+            }
+
+            internal static bool   IRQFlag;
+            internal static ushort currentAddress;
+            internal static byte   sampleBuffer;
+            internal static ushort timerCounter;
+            internal static byte   outputLevel;
+            internal static byte   shiftReg;
+            internal static byte   rateIndex;
+            internal static byte   bitsRemaining;
+            internal static bool   bufferEmpty;
+            internal static ushort bytesRemaining;
+            internal static bool   Silence;
+            internal static ushort SampleAddress;
+            internal static ushort SampleLength;
+            internal static bool   DMC_IRQ_Enabled;
+            internal static bool   Loop;
+            internal static bool   enabled;
         }
         
         internal static class Noise {
@@ -152,15 +230,16 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W400F_Noise() {
-                Length   = enabled ? lengthTable[lengthIndex] : (byte)0;
-                envStart = true;
+                lengthIndex = (byte)((Data >> 3) & 0x1F);
+                Length      = enabled ? lengthTable[lengthIndex] : (byte)0;
+                envStart    = true;
             }
             
             private static bool   envStart;
             private static byte   envDivider;
             private static byte   envDecay;
             private static bool   mode;
-            private static ushort lfsr;
+            private static ushort lfsr = 1;
             private static byte   periodIndex;
             private static ushort timerCounter;
             private static bool   constantVolume;
@@ -394,15 +473,44 @@ internal static class System {
             internal static void W4007_Pulse2() => Pulse2.W4003_PulseX();
 
             internal static void W4015_Status() {
-                // DMC.enabled      = (Data & 0x10) is 0x10;
-                // Noise.enabled    = (Data & 0x08) is 0x80;
+                PCM.enabled      = (Data & 0x10) is 0x10;
+                Noise.enabled    = (Data & 0x08) is 0x08;
                 Triangle.enabled = (Data & 0x04) is 0x04;
                 Pulse2.enabled   = (Data & 0x02) is 0x02;
                 Pulse1.enabled   = (Data & 0x01) is 0x01;
 
                 if (!Pulse1.enabled)   Pulse1.Length = 0;
                 if (!Pulse2.enabled)   Pulse2.Length = 0;
-                if (!Triangle.enabled) Triangle.enabled = false;
+                if (!Triangle.enabled) Triangle.Length = 0;
+                if (!Noise.enabled)    Noise.Length = 0;
+                if (PCM.enabled) {
+                    if (PCM.bytesRemaining is 0) {
+                        PCM.currentAddress = PCM.SampleAddress;
+                        PCM.bytesRemaining = PCM.SampleLength;
+                    }
+
+                    if (PCM.bufferEmpty && PCM.bytesRemaining is not 0) {
+                        PCM.sampleBuffer   = Memory.DMC_Read(PCM.currentAddress);
+                        PCM.bufferEmpty    = false;
+                        PCM.currentAddress = (ushort)(++PCM.currentAddress | 0x8000);
+                        PCM.bytesRemaining--;
+
+                        if (PCM.bytesRemaining is 0) {
+                            if (PCM.Loop) {
+                                PCM.currentAddress = PCM.SampleAddress;
+                                PCM.bytesRemaining = PCM.SampleLength;
+                            } else if (PCM.DMC_IRQ_Enabled) {
+                                // IRQ work
+                            }
+                        }
+
+                    }
+                } else {
+                    PCM.bytesRemaining  = 0;
+                    PCM.bufferEmpty     = true;
+                    PCM.Silence         = true;
+                    PCM.IRQFlag         = false;
+                }
             }
 
             internal static void R4015_Status() {
@@ -411,7 +519,10 @@ internal static class System {
                 resp |= (byte)(Pulse1.Length   is not 0 ? 0x01 : 0);
                 resp |= (byte)(Pulse2.Length   is not 0 ? 0x02 : 0);
                 resp |= (byte)(Triangle.Length is not 0 ? 0x04 : 0);
-                
+                resp |= (byte)(Noise.Length    is not 0 ? 0x08 : 0);
+                resp |= (byte)(PCM.Action      is not 0 ? 0x10 : 0);
+                resp |= (byte)(PCM.FrameInterrupt is not 0 ? 0x40 : 0);
+                resp |= (byte)(PCM.DMC_IRQ_Enabled ? 0x80 : 0);
                 Data =  resp;
             }
 
