@@ -6,6 +6,72 @@ using nesbox.CPU;
 namespace nesbox;
 
 internal static class System {
+    internal static class PPU {
+        // TODO: Add OAM DMA for DMC DMA to interrupt it
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Step() {
+
+        }
+
+        internal static class OAM {
+            internal static void W4014_OAMDMA() {
+                inDMA        = true;
+                oamHaltCycle = true;
+                dmaPage      = Data;
+                dmaIndex     = 0;
+                dmaLatch     = 0;
+                dmaGetPhase  = true;
+
+                dmaAlign    = virtualTime % 6 is 0;     // aligned if on an even cpu cycle
+            }
+            
+            internal static void DMA() {
+                if (!inDMA || APU.PCM.inDMA) return;
+                if (oamHaltCycle) {
+                    oamHaltCycle = false;
+                    RDY          = true;
+                    return;
+                }
+                
+                if (dmaAlign) {
+                    dmaAlign = false;
+                    return;
+                }
+        
+                if (dmaGetPhase) {
+                    var addr = (ushort)((dmaPage << 8) | dmaIndex);
+                    Memory.Read(addr, out dmaLatch);
+                } else {
+                    OAMBuffer[OAMAddress++] = dmaLatch;
+                    dmaIndex++;
+
+                    if (dmaIndex is 0) {
+                        inDMA = false;
+                        RDY   = false;
+                        return;
+                    }
+                }
+        
+                dmaGetPhase ^= true;
+            }
+        }
+        
+        private static bool dmaAlign;
+        private static byte dmaLatch;
+        private static byte dmaPage;
+        private static byte dmaIndex;
+        private static bool dmaGetPhase;
+        
+
+        internal static bool   inDMA;
+
+        internal static bool   oamHaltCycle = false;
+        internal static byte   OAMAddress;
+        internal static byte   OAMData;
+        internal static byte[] OAMBuffer = new byte[256];
+    }
+    
     internal static class APU {
         internal static void Step() {
             _clockFlipFlop ^= true;
@@ -110,6 +176,7 @@ internal static class System {
                 } else bitsRemaining--;
 
                 if (!bufferEmpty || bytesRemaining is 0) return;
+                // TODO: use /RDY to halt || EMUALTE THIS CORRECTLY
                 sampleBuffer = Memory.DMC_Read(currentAddress);
                 bufferEmpty  = false;
 
@@ -166,6 +233,8 @@ internal static class System {
             internal static bool   DMC_IRQ_Enabled;
             internal static bool   Loop;
             internal static bool   enabled;
+            
+            internal static bool   inDMA;
         }
         
         internal static class Noise {
@@ -585,6 +654,9 @@ internal static class System {
         private const ushort FRAMECOUNTER     = 0x4017;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void CPU_Read() => Read(Address, out Data);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static byte DMC_Read(ushort address) {
             
             #if RELEASE         // if you break anything, this should stop hardware acting impossibly
@@ -595,9 +667,9 @@ internal static class System {
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static void CPU_Read() {
+        internal static void Read(ushort address, out byte data) {
             if (Address < 0x2000) {
-                Data = SystemRAM[Address & 0x7ff];
+                data = SystemRAM[Address & 0x7ff];
                 goto SendReadToCart;
             }
             
@@ -614,12 +686,13 @@ internal static class System {
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
                         Quit = true;
+                        data = 0x00;
                         return;
                 }
             }
 
             if (Address > 0x4020) {
-                Data = Program.Cartridge.CPUReadByte();
+                data = Program.Cartridge.ReadByte(address);
                 goto SendReadToCart;
             }
 
@@ -651,7 +724,7 @@ internal static class System {
             }
             
             SendReadToCart:
-            Program.Cartridge.CPURead();
+            data = Program.Cartridge.ReadByte(address);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -692,8 +765,8 @@ internal static class System {
                 case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
                 case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
-                case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case OAMDMA:           PPU.OAM.W4014_OAMDMA();       break;
+                case CHANNELSTATUS:    APU.Registers.W4015_Status(); break;
                 case IODEVICE1:
                     if ((Data & 1) is 0) break;
                     Program.Controller1?.OnWrite();
@@ -771,9 +844,10 @@ internal static class System {
 
         while (!Quit) {
             Link.TriggerClockDrivenImplementations();
-
             if (virtualTime % 3 is 0) {
                 Step();
+                APU.Step();
+                PPU.OAM.DMA();
                 if (Quit) return;
             }
 
@@ -840,6 +914,7 @@ internal static class System {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void Step() {
+        if (RDY) return;
         if (cycle is 0) {
             if (Reset) {
                 Console.WriteLine("[CPU] Resetting CPU");
@@ -1058,10 +1133,11 @@ internal static class System {
 
     private const ulong BaseClockSpeed = 1_789_773ul;
 
-    private  const  double SECONDS_PER_FRAME  = 0d;
-    internal static float  Throttle           = float.NegativeInfinity;
-    internal static ulong  virtualTime        = 0;
-    internal static bool   Quit               = false;
+    internal static bool   RDY;
+    private  const  double SECONDS_PER_FRAME = 0d;
+    internal static float  Throttle          = float.NegativeInfinity;
+    internal static ulong  virtualTime       = 0;
+    internal static bool   Quit              = false;
 
 
     internal static APU.PulseChannel Pulse1 = new();
