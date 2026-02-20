@@ -1,7 +1,5 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Threading.Channels;
-using NAudio.Wave.SampleProviders;
 using nesbox.CPU;
 namespace nesbox;
 
@@ -134,13 +132,13 @@ internal static class System {
                 case S4:
                     if (UsingFiveStep) break;
                     _frameCounter = 0;
-                    if (FrameInterrupt) FrameIRQAsserted = true;
+                    if (!IRQInhibit) FrameIRQAsserted = true;
                     goto case S2;
                     
                case S5:
                    if (!UsingFiveStep) break;
                    _frameCounter = 0;
-                   if (FrameInterrupt) FrameIRQAsserted = true;
+                   if (!IRQInhibit) FrameIRQAsserted = true;
                    goto case S2;
             }
             
@@ -207,7 +205,7 @@ internal static class System {
                     currentAddress = SampleAddress;
                     bytesRemaining = SampleLength;
                 } else if (DMC_IRQ_Enabled) {
-                    // do IRQ
+                    IRQFlag = true;
                 }
             }
 
@@ -607,22 +605,17 @@ internal static class System {
                         PCM.bytesRemaining = PCM.SampleLength;
                     }
 
-                    if (PCM.bufferEmpty && PCM.bytesRemaining is not 0) {
-                        PCM.sampleBuffer   = Memory.DMC_Read(PCM.currentAddress);
-                        PCM.bufferEmpty    = false;
-                        PCM.currentAddress = (ushort)(++PCM.currentAddress | 0x8000);
-                        PCM.bytesRemaining--;
+                    if (!PCM.bufferEmpty || PCM.bytesRemaining is 0) return;
+                    PCM.sampleBuffer   = Memory.DMC_Read(PCM.currentAddress);
+                    PCM.bufferEmpty    = false;
+                    PCM.currentAddress = (ushort)(++PCM.currentAddress | 0x8000);
+                    PCM.bytesRemaining--;
 
-                        if (PCM.bytesRemaining is 0) {
-                            if (PCM.Loop) {
-                                PCM.currentAddress = PCM.SampleAddress;
-                                PCM.bytesRemaining = PCM.SampleLength;
-                            } else if (PCM.DMC_IRQ_Enabled) {
-                                // IRQ work
-                            }
-                        }
-
-                    }
+                    if (PCM.bytesRemaining is not 0) return;
+                    if (PCM.Loop) {
+                        PCM.currentAddress = PCM.SampleAddress;
+                        PCM.bytesRemaining = PCM.SampleLength;
+                    } else if (PCM.DMC_IRQ_Enabled) PCM.IRQFlag = true;
                 } else {
                     PCM.bytesRemaining  = 0;
                     PCM.bufferEmpty     = true;
@@ -633,6 +626,7 @@ internal static class System {
 
             internal static void R4015_Status() {
                 FrameIRQAsserted = false;
+                PCM.IRQFlag      = false;
                 var resp = (byte)(Data & 0xe0); // preserve open bus TODO: make more accurate much later
                 
                 resp |= (byte)(Pulse1.Length   is not 0 ? 0x01 : 0);
@@ -640,7 +634,7 @@ internal static class System {
                 resp |= (byte)(Triangle.Length is not 0 ? 0x04 : 0);
                 resp |= (byte)(Noise.Length    is not 0 ? 0x08 : 0);
                 resp |= (byte)(PCM.bytesRemaining   > 0 ? 0x10 : 0);
-                resp |= (byte)(FrameInterrupt           ? 0x40 : 0);
+                resp |= (byte)(IRQInhibit               ? 0x40 : 0);
                 resp |= (byte)(PCM.DMC_IRQ_Enabled      ? 0x80 : 0);
                 Data =  resp;
             }
@@ -654,7 +648,6 @@ internal static class System {
         }
 
         internal static bool FrameIRQAsserted;
-        internal static bool FrameInterrupt;
         internal static byte _resetFrameCounter;
         internal static bool UsingFiveStep;
         internal static bool IRQInhibit;
@@ -986,7 +979,7 @@ internal static class System {
                 goto HandleInstruction;
             }
 
-            if (CPU_IRQ || APU.FrameIRQAsserted || (APU.PCM.IRQFlag && APU.PCM.DMC_IRQ_Enabled)) {
+            if (CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag) {
                 if (Register.i) goto HandleInstruction;
                 
                 Vector     = Vectors.IRQ;
