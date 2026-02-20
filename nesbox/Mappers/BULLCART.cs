@@ -7,8 +7,8 @@ internal enum NameTableArrangements : byte {
     Horizontal
 }
 
-internal sealed class NROM : API.ICartridge {
-    public NROM(ref EList<string> args) {
+internal sealed class BULLCART : API.IFamicomCartridge {
+    public BULLCART(ref EList<string> args) {
         var next = new EList<string>();
 
         
@@ -112,25 +112,27 @@ internal sealed class NROM : API.ICartridge {
     public byte ReadByte(ushort address) => ReadByteTask(this, address);
     public byte CPUReadByte()            => CPUReadByteTask(this);
 
-    public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
-    public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value ; }
-    public bool   EXPO         { get;                   set; }
-    public bool   EXP1         { get;                   set; }
-    public bool   EXP2         { get;                   set; }
-    public bool   EXP3         { get;                   set; }
-    public bool   EXP4         { get;                   set; }
-    public bool   EXP5         { get;                   set; }
-    public bool   EXP6         { get;                   set; }
-    public bool   EXP7         { get;                   set; }
-    public bool   EXP8         { get;                   set; }
-    public bool   EXP9         { get;                   set; }
+    public byte[] ProgramROM                    { get => __ProgramROM;   set => __ProgramROM = value; }
+    public byte[] CharacterROM                  { get => __CharacterROM; set => __CharacterROM = value ; }
+    public float  ModifyAPUSignal(float signal) => signal;
+
+    public bool  EXPO                          { get; set; }
+    public bool  EXP1                          { get; set; }
+    public bool  EXP2                          { get; set; }
+    public bool  EXP3                          { get; set; }
+    public bool  EXP4                          { get; set; }
+    public bool  EXP5                          { get; set; }
+    public bool  EXP6                          { get; set; }
+    public bool  EXP7                          { get; set; }
+    public bool  EXP8                          { get; set; }
+    public bool  EXP9                          { get; set; }
 
     private byte[] __ProgramROM   = [];
     private byte[] __CharacterROM = [];
 
     #region CPUReadByte
-    private Func<NROM, byte> CPUReadByteTask      = (self)          => self.StandardProgramCPUReadByte();
-    private Func<NROM, ushort, byte> ReadByteTask = (self, address) => self.StandardProgramReadByte(address);
+    private Func<BULLCART, byte> CPUReadByteTask      = (self)          => self.StandardProgramCPUReadByte();
+    private Func<BULLCART, ushort, byte> ReadByteTask = (self, address) => self.StandardProgramReadByte(address);
     
     private byte SmallProgramCPUReadByte() => System.Address switch {
         < 0x8000                           => (byte)(System.Address >> 8),

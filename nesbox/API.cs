@@ -50,10 +50,10 @@ internal static class API {
         public void SetIndex(byte Index);
     }
 
-    public class HasIRQLine {
-        public void SetIRQLine(bool assertion) => System.IRQPending = assertion;
-        public void DeassertIRQ()              => System.IRQPending = false;
-        public void AssertIRQ()                => System.IRQPending = true;
+    public sealed class HasIRQLine {
+        public void SetIRQLine(bool assertion) => System.CPU_IRQ = assertion;
+        public void DeassertIRQ()              => System.CPU_IRQ = false;
+        public void AssertIRQ()                => System.CPU_IRQ = true;
     }
 
     internal interface ICartridge {
@@ -88,7 +88,13 @@ internal static class API {
         
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
-        
+    }
+
+    internal interface IFamicomCartridge : ICartridge {
+        public float ModifyAPUSignal(float signal);
+    }
+    
+    internal interface INESCartridge : ICartridge {
         public bool EXPO { get; set; }
         public bool EXP1 { get; set; }
         public bool EXP2 { get; set; }

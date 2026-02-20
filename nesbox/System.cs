@@ -73,6 +73,23 @@ internal static class System {
     }
     
     internal static class APU {
+        internal static /* pcm */ float GetPCMSample() {
+            var p1 = Pulse1.GetLevel();
+            var p2 = Pulse2.GetLevel();
+            var t  = Triangle.GetLevel();
+            var n  = Noise.GetLevel();
+            var p  = PCM.GetLevel();
+
+            var pulseSum = p1 + p2;
+            var pulseOut = pulseSum > 0 ? 95.88f          / (8128f / pulseSum                              + 100f) : 0f;
+            var tnpOut   = (t | n | p) is not 0 ? 159.79f / (1f    / (t / 8227f + n / 12241f + p / 22638f) + 100f) : 0f;
+
+            return (Program.isFamicom
+                ? ((API.IFamicomCartridge)Program.Cartridge).ModifyAPUSignal(pulseOut + tnpOut)
+                : pulseOut + tnpOut) * 2f - 1f;
+        }
+        
+        
         internal static void Step() {
             _clockFlipFlop ^= true;
 
@@ -117,13 +134,13 @@ internal static class System {
                 case S4:
                     if (UsingFiveStep) break;
                     _frameCounter = 0;
-                    // consider IRQ
+                    if (FrameInterrupt) FrameIRQAsserted = true;
                     goto case S2;
                     
                case S5:
                    if (!UsingFiveStep) break;
                    _frameCounter = 0;
-                   // consider IRQ
+                   if (FrameInterrupt) FrameIRQAsserted = true;
                    goto case S2;
             }
             
@@ -141,6 +158,8 @@ internal static class System {
                 0x00BE, 0x00A0, 0x008E, 0x0080,
                 0x006A, 0x0054, 0x0048, 0x0036
             };
+
+            internal static byte GetLevel() => enabled ? (byte)(outputLevel & 0x7f) : (byte)0;
             
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void Step() {
@@ -246,6 +265,11 @@ internal static class System {
                 10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,
                 12,16,24,18,48,20,96,22,192,24,72,26,16,28,32,30
             };
+
+            internal static byte GetLevel() =>
+                !enabled || Length is 0 || (lfsr & 1) is not 0
+                    ? (byte)0
+                    : (byte)((constantVolume ? Volume : envDecay) & 0x0f);
             
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void Step() {
@@ -336,6 +360,13 @@ internal static class System {
                 }
             }
 
+            internal static byte GetLevel() {
+                if (!enabled || Length == 0 || linearCounter == 0) return 0;
+
+                var s  = sequencer & 0x1f;
+                return (byte)(s < 0x10 ? 0x0f - s : s - 0x10);
+            }
+
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void QuarterFrame() {
                 if (linearReloadFlag) linearCounter = reloadValue;
@@ -401,6 +432,24 @@ internal static class System {
                 }
 
                 timerCounter--;
+            }
+
+            private static readonly byte[] DutyTable = [0b01000000, 0b01100000, 0b01111000, 0b10011111];
+            
+            internal byte GetLevel() {
+                if (!enabled || Length is 0 || Timer < 8) return 0;
+
+                if (SweepEnable && Shift is not 0) {
+                    var change = Timer >> Shift;
+                    var target = Negate
+                        ? this == Pulse1 ? (Timer - change - 1) : Timer - change
+                        : Timer + change;
+
+                    if (target > 0x7ff) return 0;
+                }
+                
+                if (DutyTable[Duty] >> seq is 0) return 0;
+                return ConstantVolume ? Volume : envDecay;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -583,15 +632,16 @@ internal static class System {
             }
 
             internal static void R4015_Status() {
+                FrameIRQAsserted = false;
                 var resp = (byte)(Data & 0xe0); // preserve open bus TODO: make more accurate much later
                 
                 resp |= (byte)(Pulse1.Length   is not 0 ? 0x01 : 0);
                 resp |= (byte)(Pulse2.Length   is not 0 ? 0x02 : 0);
                 resp |= (byte)(Triangle.Length is not 0 ? 0x04 : 0);
                 resp |= (byte)(Noise.Length    is not 0 ? 0x08 : 0);
-                resp |= (byte)(PCM.Action      is not 0 ? 0x10 : 0);
-                resp |= (byte)(PCM.FrameInterrupt is not 0 ? 0x40 : 0);
-                resp |= (byte)(PCM.DMC_IRQ_Enabled ? 0x80 : 0);
+                resp |= (byte)(PCM.bytesRemaining   > 0 ? 0x10 : 0);
+                resp |= (byte)(FrameInterrupt           ? 0x40 : 0);
+                resp |= (byte)(PCM.DMC_IRQ_Enabled      ? 0x80 : 0);
                 Data =  resp;
             }
 
@@ -603,6 +653,8 @@ internal static class System {
             }
         }
 
+        internal static bool FrameIRQAsserted;
+        internal static bool FrameInterrupt;
         internal static byte _resetFrameCounter;
         internal static bool UsingFiveStep;
         internal static bool IRQInhibit;
@@ -842,6 +894,7 @@ internal static class System {
         long nextPrint = 0;
         double worstLateMs = 0;
 
+        var untilNextSample = 1d / SamplingFrequency;
         while (!Quit) {
             Link.TriggerClockDrivenImplementations();
             if (virtualTime % 3 is 0) {
@@ -849,6 +902,11 @@ internal static class System {
                 APU.Step();
                 PPU.OAM.DMA();
                 if (Quit) return;
+            }
+
+            if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
+                untilNextSample += 1d / SamplingFrequency;
+                SampleBuffer.Add(APU.GetPCMSample());
             }
 
             if (virtualTime % DOTS_PER_FRAME is 0 && Throttle > 0f) {
@@ -928,11 +986,12 @@ internal static class System {
                 goto HandleInstruction;
             }
 
-            if (IRQPending) {
-                if (Register.i) goto HandleInstruction;;
-
-                Vector   = Vectors.IRQ;
-                OpHandle = Interrupt;
+            if (CPU_IRQ || APU.FrameIRQAsserted || (APU.PCM.IRQFlag && APU.PCM.DMC_IRQ_Enabled)) {
+                if (Register.i) goto HandleInstruction;
+                
+                Vector     = Vectors.IRQ;
+                OpHandle   = Interrupt;
+                Register.i = true;          // set interrupt mask (we are in an interrupt)
                 goto HandleInstruction;
             }
             
@@ -1070,7 +1129,7 @@ internal static class System {
 
 
     private  static ushort Vector;
-    internal static bool   IRQPending;
+    internal static bool   CPU_IRQ;
     private  static bool   NMIPending;
     private static  bool   Reset;
     
@@ -1132,14 +1191,17 @@ internal static class System {
     }
 
     private const ulong BaseClockSpeed = 1_789_773ul;
+    private const ulong  dotsPerSecond  = 5_369_318ul;
 
     internal static bool   RDY;
-    private  const  double SECONDS_PER_FRAME = 0d;
-    internal static float  Throttle          = float.NegativeInfinity;
-    internal static ulong  virtualTime       = 0;
-    internal static bool   Quit              = false;
+    private  const  double SECONDS_PER_FRAME    = 0d;
+    internal static float  Throttle             = float.NegativeInfinity;
+    internal static ulong  virtualTime          = 0;
+    internal static bool   Quit                 = false;
+    internal static uint   SamplingFrequency    = 48_000;
+    internal static double SamplingCoefficiient = 0f;
 
-
+    internal static List<float> SampleBuffer = [];
     internal static APU.PulseChannel Pulse1 = new();
     internal static APU.PulseChannel Pulse2 = new();
 }

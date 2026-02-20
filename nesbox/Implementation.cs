@@ -15,8 +15,8 @@ namespace nesbox;
 
 
 internal static class Implementation {
-    internal static void Initialize(EList<string> args) {
-        Program.Cartridge = new NROM(ref args);
+    internal static API.ICartridge Initialize(EList<string> args) {
+        var cartridge = new BULLCART(ref args);
         StandardController_NTSCU? Controller1 = null;
         Link.Subscribe.ControllerToPort(0, ref Controller1);
         while (args.MoveNext()) {
@@ -26,5 +26,7 @@ internal static class Implementation {
                     break;
             }
         }
+
+        return cartridge;
     }
 }
