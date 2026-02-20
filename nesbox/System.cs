@@ -6,12 +6,39 @@ namespace nesbox;
 internal static class System {
     internal static class PPU {
         // TODO: Add OAM DMA for DMC DMA to interrupt it
+        
+        private const int DOTS_PER_SCANLINE = 341;
+        private const int VBLANK_SET_DOT    = 241 * DOTS_PER_SCANLINE + 1; // 82182
+        private const int VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
+
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Step() {
+            switch (virtualTime % DOTS_PER_FRAME) {
+                case VBLANK_SET_DOT:
+                    inVblank = true;
 
+                    if (NMIEnabled) {
+                        NMIAsserted = true;
+                    }
+                    break;
+                
+                case VBLANK_CLEAR_DOT:
+                    inVblank = false;
+                    break;
+            }
         }
 
+        internal static class Registers {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2000_PPUCRTL() {
+                var NMIAlreadyEnabled = NMIEnabled;
+                NMIEnabled = (Data & 0x80) is 0x80;
+
+                if (!NMIAlreadyEnabled && NMIEnabled && inVblank) NMIAsserted = true;
+            }
+        }
+        
         internal static class OAM {
             internal static void W4014_OAMDMA() {
                 inDMA        = true;
@@ -60,10 +87,10 @@ internal static class System {
         private static byte dmaPage;
         private static byte dmaIndex;
         private static bool dmaGetPhase;
-        
 
+        internal static bool   NMIEnabled;
         internal static bool   inDMA;
-
+        internal static bool   inVblank;
         internal static bool   oamHaltCycle = false;
         internal static byte   OAMAddress;
         internal static byte   OAMData;
@@ -752,14 +779,14 @@ internal static class System {
             
             if (Address < 0x4000) {
                 switch (Address & 0x2007) {
-                    case PPUCTRL:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case OAMDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case PPUSCROLL: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case PPUADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
-                    case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented");
+                    case PPUCTRL:   data = (byte)(Address >> 8); goto SendReadToCart;
+                    case PPUMASK:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUMASK Not Implemented PC={PC}");
+                    case PPUSTATUS: throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUSTATUS Not Implemented PC={PC}");
+                    case OAMADDR:   throw new NotImplementedException($"[CPU] [Memory] [PPU] OAMADDR Not Implemented PC={PC}");
+                    case OAMDATA:   throw new NotImplementedException($"[CPU] [Memory] [PPU] OAMDATA Not Implemented PC={PC}");
+                    case PPUSCROLL: throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUSCROLL Not Implemented PC={PC}");
+                    case PPUADDR:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUADDR Not Implemented PC={PC}");
+                    case PPUDATA:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUDATA Not Implemented PC={PC}");
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
                         Quit = true;
@@ -794,7 +821,7 @@ internal static class System {
                 
                 case < 0x4000:
                     switch (Address & 0b0010_0111) {
-                        case PPUCTRL:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUCTRL:   PPU.Registers.W2000_PPUCRTL(); goto SendReadToCart;
                         case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
                         case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
                         case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
@@ -989,14 +1016,15 @@ internal static class System {
                 goto HandleInstruction;
             }
             
-            if (NMIPending) {
-                Vector   = Vectors.NMI;
-                OpHandle = Interrupt;
+            if (NMIAsserted) {
+                NMIAsserted = false;
+                Vector      = Vectors.NMI;
+                OpHandle    = Interrupt;
                 goto HandleInstruction;
             }
 
             if (CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag) {
-                if (Register.i) goto HandleInstruction;
+                if (Register.i) goto FetchInstruction;
                 
                 Vector     = Vectors.IRQ;
                 OpHandle   = Interrupt;
@@ -1004,6 +1032,7 @@ internal static class System {
                 goto HandleInstruction;
             }
             
+            FetchInstruction:
             AD          = PC;
             DriveAddressPins();
             
@@ -1139,7 +1168,7 @@ internal static class System {
 
     private  static ushort Vector;
     internal static bool   CPU_IRQ;
-    private  static bool   NMIPending;
+    private  static bool   NMIAsserted;
     private static  bool   Reset;
     
     private static  Action OpHandle;

@@ -664,7 +664,7 @@ internal static class OpCodes {
 
 
             default:
-                Console.WriteLine("[CPU] Performed JMP absolute on incorrect cycle");
+                Console.WriteLine($"[CPU] Performed JMP absolute on incorrect cycle cycle={cycle}");
                 Quit = true;
                 break;
         }
@@ -1458,7 +1458,7 @@ internal static class OpCodes {
                 break;
             
             case 2:
-                Address = ++PC;
+                Address = PC;
                 Memory.CPU_Read();
                 
                 ADH  = Data;
