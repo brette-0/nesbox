@@ -588,6 +588,38 @@ internal static class System {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W4007_Pulse2() => Pulse2.W4003_PulseX();
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4008_Triangle() => Triangle.W4008_Triangle();
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400A_Triangle() => Triangle.W400A_Triangle();
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400B_Triangle() => Triangle.W400B_Triangle();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400C_Noise() => Noise.W400C_Noise();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400E_Noise() => Noise.W400E_Noise();
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W400F_Noise() => Noise.W400F_Noise();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4010_DMC() => PCM.W4010_DMC();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4011_DMC() => PCM.W4011_DMC();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4012_DMC() => PCM.W4012_DMC();
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W4013_DMC() => PCM.W4013_DMC();
+            
+
+            
             internal static void W4015_Status() {
                 PCM.enabled      = (Data & 0x10) is 0x10;
                 Noise.enabled    = (Data & 0x08) is 0x08;
@@ -742,34 +774,15 @@ internal static class System {
             }
 
             switch (Address) {
-                case PULSE1_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE2_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE1_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE2_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE1_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE2_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE1_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case PULSE2_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case TRIANGLE_COUNTER: throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case TRIANGLE_TIMER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case TRIANGLE_LINEAR:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case NOISE_ENVELOPE:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case NOISE_MODE:       throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case NOISE_COUNTER:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case DMC_MODE:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case OAMDMA:           throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case CHANNELSTATUS:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented");
-                case IODEVICE1:        Data = Program.Controller1?.OnRead() ?? 0; goto SendReadToCart;
-                case IODEVICE2:        Data = Program.Controller2?.OnRead() ?? 0; goto SendReadToCart;
+                case CHANNELSTATUS: APU.Registers.R4015_Status(); data = Data; goto SendReadToCart;
+                case IODEVICE1:     data = Program.Controller1?.OnRead() ?? 0; goto SendReadToCart;
+                case IODEVICE2:     data = Program.Controller2?.OnRead() ?? 0; goto SendReadToCart;
                 
-                default: Data = (byte)(Address >> 8); goto SendReadToCart;
+                default: data = (byte)(Address >> 8); goto SendReadToCart;
             }
             
             SendReadToCart:
-            data = Program.Cartridge.ReadByte(address);
+            Program.Cartridge.ProgramRead(address);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -792,26 +805,26 @@ internal static class System {
                     }
                     break;
                 
-                case PULSE1_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE2_ENVELOPE:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE1_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE2_COUNTER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE1_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE2_SWEEP:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE1_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case PULSE2_TIMER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case TRIANGLE_COUNTER: throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case TRIANGLE_TIMER:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case TRIANGLE_LINEAR:  throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case NOISE_ENVELOPE:   throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case NOISE_MODE:       throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case NOISE_COUNTER:    throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case DMC_MODE:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case DMC_LOAD:         throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case DMC_ASAMPLE:      throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
-                case DMC_LSAMPLE:      throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
-                case OAMDMA:           PPU.OAM.W4014_OAMDMA();       break;
-                case CHANNELSTATUS:    APU.Registers.W4015_Status(); break;
+                case PULSE1_ENVELOPE:  APU.Registers.W4000_Pulse1();   goto SendReadToCart;
+                case PULSE2_ENVELOPE:  APU.Registers.W4004_Pulse2();   goto SendReadToCart;
+                case PULSE1_COUNTER:   APU.Registers.W4001_Pulse1();   goto SendReadToCart;
+                case PULSE2_COUNTER:   APU.Registers.W4005_Pulse2();   goto SendReadToCart;
+                case PULSE1_SWEEP:     APU.Registers.W4002_Pulse1();   goto SendReadToCart;
+                case PULSE2_SWEEP:     APU.Registers.W4006_Pulse2();   goto SendReadToCart;
+                case PULSE1_TIMER:     APU.Registers.W4003_Pulse1();   goto SendReadToCart;
+                case PULSE2_TIMER:     APU.Registers.W4007_Pulse2();   goto SendReadToCart;
+                case TRIANGLE_COUNTER: APU.Registers.W4008_Triangle(); goto SendReadToCart;
+                case TRIANGLE_TIMER:   APU.Registers.W400A_Triangle(); goto SendReadToCart;
+                case TRIANGLE_LINEAR:  APU.Registers.W400B_Triangle(); goto SendReadToCart;
+                case NOISE_ENVELOPE:   APU.Registers.W400C_Noise();    goto SendReadToCart;
+                case NOISE_MODE:       APU.Registers.W400E_Noise();    goto SendReadToCart;
+                case NOISE_COUNTER:    APU.Registers.W400F_Noise();    goto SendReadToCart;
+                case DMC_MODE:         APU.Registers.W4010_DMC();      goto SendReadToCart;
+                case DMC_LOAD:         APU.Registers.W4011_DMC();      goto SendReadToCart;
+                case DMC_ASAMPLE:      APU.Registers.W4012_DMC();      goto SendReadToCart;
+                case DMC_LSAMPLE:      APU.Registers.W4013_DMC();      goto SendReadToCart;
+                case OAMDMA:           PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
+                case CHANNELSTATUS:    APU.Registers.W4015_Status();   goto SendReadToCart;;
                 case IODEVICE1:
                     if ((Data & 1) is 0) break;
                     Program.Controller1?.OnWrite();
@@ -825,8 +838,11 @@ internal static class System {
                 
                 default:
                     // TODO: open bus, nothing to write to "Actually, remember how we write to PPUSTATUS to precharge"
+                    goto SendReadToCart;
                     break;
             }
+            SendReadToCart:
+            Program.Cartridge.ProgramRead(Address);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

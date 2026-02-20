@@ -60,7 +60,7 @@ internal static class API {
         /// <summary>
         /// Expects information from CPU Address, is contextualized as a read
         /// </summary>
-        public void CPURead();
+        public void ProgramRead(ushort address);
 
         /// <summary>
         /// Expects information from CPU Address, is contextualized as a write

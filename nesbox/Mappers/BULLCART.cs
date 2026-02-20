@@ -98,8 +98,7 @@ internal sealed class BULLCART : API.IFamicomCartridge {
         args = next;
     }
     
-    // NROM does not watch reads or writes or with intent or event
-    public void CPURead() { }
+    public void ProgramRead(ushort address) { }
     public void CPUWrite() { }
     
     public void PPURead() {
