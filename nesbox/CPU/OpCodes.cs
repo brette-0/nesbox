@@ -80,7 +80,7 @@ internal static class OpCodes {
 
         #region 0x10-0x20
 
-        /* 10 bpl r   */ () => Branch(Register.n),
+        /* 10 bpl r   */ () => Branch(!Register.n),
         /* 11 ora *+y */ () => IndirectIndexed(ORA),
         /* 12 jam     */ JAM,
         /* 13 slo *+y */ () => IndirectIndexed(SLO),
@@ -203,7 +203,7 @@ internal static class OpCodes {
 
         #region 0x50-0x60
 
-        /* 50 bvc r   */ () => Branch(Register.v),
+        /* 50 bvc r   */ () => Branch(!Register.v),
         /* 51 eor *+y */ () => IndirectIndexed(EOR),
         /* 52 jam     */ JAM,
         /* 53 sre *+y */ () => IndirectIndexed(SRE),
@@ -287,7 +287,7 @@ internal static class OpCodes {
 
         #region 0x90-0xa0
 
-        /* 90 bcc     */ () => Branch(Register.c),
+        /* 90 bcc     */ () => Branch(!Register.c),
         /* 91 sta *+y */ () => IndirectIndexed(STA),
         /* 92 jam     */ JAM,
         /* 93 sha *+y */ () => IndirectIndexed(SHA),
@@ -371,7 +371,7 @@ internal static class OpCodes {
 
         #region 0xd0-0xe0
 
-        /* d0 bne r   */ () => Branch(Register.z),
+        /* d0 bne r   */ () => Branch(!Register.z),
         /* d1 cmp *+y */ () => IndexedIndirect(CMP),
         /* d2 jam     */ JAM,
         /* d3 dcp *+y */ () => IndexedIndirect(DCP),
@@ -883,51 +883,47 @@ internal static class OpCodes {
     }
     
     // interrupts only occur after an instruction has finished, so we can evaluate the condition immediately
-    private static void Branch(bool condition) {
+    private static void Branch(bool take) {
         switch (cycle) {
             case 1:
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                AD = PC;
                 DriveAddressPins();
                 Memory.CPU_Read();
 
                 DB = Data;
                 PC++;
                 
-                
-
-                if (!condition) cycle = 0xff;
+                if (!take) cycle = 0xff;
                 break;
 
             case 2:
                 // Taken → dummy read at current PC
-                ADL = (byte)(PC & 0xFF);
-                ADH = (byte)(PC >> 8);
+                AD = PC;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 break;
 
             case 3:
                 var rel = (sbyte)DB;
-                var sum = (ushort)(PCL + rel);
+                var target = (ushort)(PC + rel);
 
-                ADL = (byte)sum;
+                ADL = (byte)target;
                 ADH = PCH;
 
                 DriveAddressPins();
                 Memory.CPU_Read();
 
-                PC = (ushort)((PC & 0xFF00) | ADL);
-
-                if ((sum & 0x100) == 0) cycle = 0xff;
+                PCL = (byte)target;
+                if (((PC ^ target) & 0xff00) is 0) cycle = 0xff;
+                else Data = (byte)(target >> 8);
                 break;
 
             case 4:
-                ADH++;
+                ADH = Data;
                 DriveAddressPins();
                 Memory.CPU_Read();
 
-                PC    = (ushort)((ADH << 8) | ADL);
+                PC    = Address;
                 cycle = 0xff;
                 break;
 
@@ -1283,7 +1279,7 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void NonArithmeticProcessorFlagSets(byte ctx) {
         Register.z = ctx is 0;
-        Register.n = ctx > 0x79;
+        Register.n = ctx > 0x7f;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1550,8 +1546,7 @@ internal static class OpCodes {
     private static unsafe void Immediate(Opcode op) {
         switch (cycle) {
             case 1:
-                ADL = PCL;
-                ADH = PCH;
+                AD = PC;
 
                 DriveAddressPins();
                 Memory.CPU_Read();

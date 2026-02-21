@@ -772,14 +772,14 @@ internal static class System {
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Read(ushort address, out byte data) {
-            if (Address < 0x2000) {
-                data = SystemRAM[Address & 0x7ff];
+            if (address < 0x2000) {
+                data = SystemRAM[address & 0x7ff];
                 goto SendReadToCart;
             }
             
-            if (Address < 0x4000) {
-                switch (Address & 0x2007) {
-                    case PPUCTRL:   data = (byte)(Address >> 8); goto SendReadToCart;
+            if (address < 0x4000) {
+                switch (address & 0x2007) {
+                    case PPUCTRL:   data = (byte)(address >> 8); goto SendReadToCart;
                     case PPUMASK:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUMASK Not Implemented PC={PC}");
                     case PPUSTATUS: throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUSTATUS Not Implemented PC={PC}");
                     case OAMADDR:   throw new NotImplementedException($"[CPU] [Memory] [PPU] OAMADDR Not Implemented PC={PC}");
@@ -795,17 +795,17 @@ internal static class System {
                 }
             }
 
-            if (Address > 0x4020) {
+            if (address > 0x4020) {
                 data = Program.Cartridge.ReadByte(address);
                 goto SendReadToCart;
             }
 
-            switch (Address) {
+            switch (address) {
                 case CHANNELSTATUS: APU.Registers.R4015_Status(); data = Data; goto SendReadToCart;
                 case IODEVICE1:     data = Program.Controller1?.OnRead() ?? 0; goto SendReadToCart;
                 case IODEVICE2:     data = Program.Controller2?.OnRead() ?? 0; goto SendReadToCart;
                 
-                default: data = (byte)(Address >> 8); goto SendReadToCart;
+                default: data = (byte)(address >> 8); goto SendReadToCart;
             }
             
             SendReadToCart:
@@ -1050,9 +1050,6 @@ internal static class System {
     }
 
     private static void StepReset() {
-        #if DEBUG
-        Console.WriteLine($"Resetting CPU : {cycle} / 6");
-        #endif
         switch (cycle) {
             case 0:
                 AD = PC;
@@ -1155,7 +1152,8 @@ internal static class System {
                 AD = (ushort)(Vector + 1);
                 DriveAddressPins();
                 Memory.CPU_Read();
-                PCL = DB;
+                PCH   = Data;
+                cycle = 0xff;
                 break;
             
             default:
@@ -1238,7 +1236,7 @@ internal static class System {
     internal static bool   Quit                 = false;
     internal static uint   SamplingFrequency    = 48_000;
     internal static double SamplingCoefficiient = 0f;
-
+    internal static bool   fetchOnNext;
     internal static List<float> SampleBuffer = [];
     internal static APU.PulseChannel Pulse1 = new();
     internal static APU.PulseChannel Pulse2 = new();
