@@ -7,9 +7,9 @@ internal static class System {
     internal static class PPU {
         // TODO: Add OAM DMA for DMC DMA to interrupt it
         
-        private const int DOTS_PER_SCANLINE = 341;
-        private const int VBLANK_SET_DOT    = 241 * DOTS_PER_SCANLINE + 1; // 82182
-        private const int VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
+        private const ulong DOTS_PER_SCANLINE = 341;
+        private const ulong VBLANK_SET_DOT    = 241 * DOTS_PER_SCANLINE + 1; // 82182
+        private const ulong VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
 
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -820,7 +820,7 @@ internal static class System {
                     break;
                 
                 case < 0x4000:
-                    switch (Address & 0b0010_0111) {
+                    switch (Address & 0x2007) {
                         case PPUCTRL:   PPU.Registers.W2000_PPUCRTL(); goto SendReadToCart;
                         case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
                         case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
@@ -857,7 +857,7 @@ internal static class System {
                     Program.Controller1?.OnWrite();
                     Program.Controller2?.OnWrite();
                     break;
-                case FRAMECOUNTER:     throw new NotImplementedException("[CPU] [Memory] [APU] Not Implemented"); break;
+                case FRAMECOUNTER:     APU.Registers.W4017_FrameCounter(); goto SendReadToCart;
                     
                 case > 0x4020:
                     Program.Cartridge.CPUWrite();
@@ -896,7 +896,7 @@ internal static class System {
         internal static byte[] SystemRAM = new byte[0x800];
     }
     
-    internal const int DOTS_PER_FRAME = 89_342;
+    internal const ulong DOTS_PER_FRAME = 89_342;
     
     /// <summary>
     /// Begin CPU Emulation
@@ -931,7 +931,9 @@ internal static class System {
         double worstLateMs = 0;
 
         var untilNextSample = 1d / SamplingFrequency;
+        
         while (!Quit) {
+            PPU.Step();
             Link.TriggerClockDrivenImplementations();
             if (virtualTime % 3 is 0) {
                 Step();
@@ -1040,6 +1042,7 @@ internal static class System {
             PC++;
             Register.IR = Data;
             OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
+            if (Register.IR is not 0) Console.WriteLine($"IR = {Register.IR}");
             cycle++;
             return;
         }
@@ -1057,7 +1060,6 @@ internal static class System {
                 Memory.CPU_Read();
                 break;
             
-            
             case 1:
                 ADL = 0x01;
                 ADH = Register.S;
@@ -1067,8 +1069,8 @@ internal static class System {
                 break;
             
             case 2:
-                ADL = 0x01;
-                ADH = Register.S;
+                ADH = 0x01;
+                ADL = Register.S;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 Register.S--;
@@ -1115,7 +1117,6 @@ internal static class System {
                 Memory.CPU_Read();
                 return;
             
-            
             case 1:
                 Data = PCH;
                 Memory.Push();
@@ -1132,8 +1133,8 @@ internal static class System {
                            (Register.z ? 1 : 0) << 1 |
                            (Register.i ? 1 : 0) << 2 |
                            (Register.d ? 1 : 0) << 3 |
-                           (0 << 4)                  |
-                           (1 << 5)                  |
+                           0                         |
+                           32                        |
                            (Register.v ? 1 : 0) << 6 |
                            (Register.n ? 1 : 0) << 7);
                 Memory.Push();

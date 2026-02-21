@@ -1445,7 +1445,7 @@ internal static class OpCodes {
         
         switch (cycle) {
             case 1:
-                Address = PC;
+                AD = PC;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 
