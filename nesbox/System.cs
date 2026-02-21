@@ -1042,7 +1042,6 @@ internal static class System {
             PC++;
             Register.IR = Data;
             OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
-            if (Register.IR is not 0) Console.WriteLine($"IR = {Register.IR}");
             cycle++;
             return;
         }

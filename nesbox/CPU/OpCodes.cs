@@ -698,7 +698,7 @@ internal static class OpCodes {
                 DriveAddressPins();
                 Memory.CPU_Read();
 
-                PC = (ushort)((Data << 8) | DB);
+                DB = Data;
                 break;
 
             case 4:
