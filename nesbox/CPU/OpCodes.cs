@@ -372,9 +372,9 @@ internal static class OpCodes {
         #region 0xd0-0xe0
 
         /* d0 bne r   */ () => Branch(!Register.z),
-        /* d1 cmp *+y */ () => IndexedIndirect(CMP),
+        /* d1 cmp *+y */ () => IndirectIndexed(CMP),
         /* d2 jam     */ JAM,
-        /* d3 dcp *+y */ () => IndexedIndirect(DCP),
+        /* d3 dcp *+y */ () => IndirectIndexed(DCP),
         /* d4 nop d+x */ () => DirectPageIndexed(Register.X, NOP),
         /* d5 cmp d+x */ () => DirectPageIndexed(Register.X, CMP),
         /* d6 dec d+x */ () => DirectPageIndexed(Register.X, DEC),
@@ -1306,28 +1306,17 @@ internal static class OpCodes {
             
             case 3:
                 var sum = ADL + reg;
-                ADL  = (byte)sum;
+                ADL          = (byte)sum;
+                _pageOverlap = sum > 0xff;
 
                 DriveAddressPins();
                 Memory.CPU_Read();
-                
-                switch (op.kind) {
-                    case RWKind.Write:
-                    case RWKind.RMW:
-                        break;
-                    
-                    case RWKind.Read:
-                        if (sum < 0x100) goto complete;
-                        break;
-                    
-                    default:
-                        throw new ArgumentOutOfRangeException();
-                }
-                
+
+                if (op.kind is RWKind.Read && !_pageOverlap) goto complete;
                 break;
 
             case 4:
-                ADH++;
+                if (_pageOverlap) ADH++;
 
                 switch (op.kind) {
                     case RWKind.Write: goto complete;
@@ -1348,14 +1337,14 @@ internal static class OpCodes {
                 break;
             
             case 5: 
-                if (op.kind is RWKind.RMW) goto complete;
+                if (op.kind is not RWKind.RMW) goto default;
                 DriveAddressPins();
                 Memory.CPU_Write();
                 break;
                 
             case 6: 
-                if (op.kind is RWKind.RMW) goto complete;
-                goto default;
+                if (op.kind is not RWKind.RMW) goto default;
+                goto complete;
             
             default:
                 Console.WriteLine("[CPU] Performed Absolute Indexed on incorrect cycle");
@@ -1502,7 +1491,6 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void DirectPage(Opcode op) {
-        
         Action post = op.kind is RWKind.Read ? EndRead : EndRest;
         
         switch (cycle) {
@@ -1519,15 +1507,17 @@ internal static class OpCodes {
                 DriveAddressPins();
                 Memory.CPU_Read();
                 
-                switch (op.kind) {
-                    case RWKind.Read:  goto complete;
-                    case RWKind.Write: goto complete;
-                    case RWKind.RMW:   break;
-
-                    default:
-                        throw new ArgumentOutOfRangeException($"Instruction Type {nameof(RWKind)} is invalid.");
-                }
-
+                if (op.kind is RWKind.RMW) break;
+                goto complete;
+                
+            case 3:
+                if (op.kind is not RWKind.RMW) goto default;
+                DriveAddressPins();
+                Memory.CPU_Write();
+                break;
+            
+            case 4:
+                if (op.kind is not RWKind.RMW) goto default;
                 goto complete;
             
             default:
@@ -1564,13 +1554,11 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void IndirectIndexed(Opcode op) {
-        
-        Action post = op.kind is RWKind.Read ? EndRead : EndRest;
+        Action post = op.kind is RWKind.Read ? EndRead : EndRest; 
         
         switch (cycle){
             case 1:
                 Address = PC;
-                DriveAddressPins();
                 Memory.CPU_Read();
                 DB = Data;                
                 PC++;
@@ -1579,33 +1567,30 @@ internal static class OpCodes {
             case 2:
                 Address = DB;
                 Memory.CPU_Read();
-                
                 ADL     = Data;
                 break;
 
             case 3:
-                ADL = (byte)(DB + 1);
-                ADH = Data;
-
-                DriveAddressPins();
+                Address = (byte)(DB + 1);
                 Memory.CPU_Read();
                 ADH  = Data;
                 break;
 
             case 4:
-                var sum = ADL + Register.Y;
-                ADL         = (byte)sum;
-
+                var sum =ADL + Register.Y;
+                ADL     = (byte)sum;
+                _pageOverlap = sum > 0xff; 
+                
                 DriveAddressPins();
                 Memory.CPU_Read();
-
+                
                 switch (op.kind) {
                     case RWKind.Write:
                     case RWKind.RMW:
                         break;
                     
                     case RWKind.Read:
-                        if (sum > 0xff) break;
+                        if (_pageOverlap) break;
                         goto complete;
                         
                     default: throw new ArgumentException();    
@@ -1613,17 +1598,18 @@ internal static class OpCodes {
                 break;
             
             case 5:
-                ADH++;
-
+                if (_pageOverlap) {
+                    ADH++;
+                    DriveAddressPins();
+                }
+                
                 switch (op.kind) {
                     case RWKind.Write: goto complete;
                     case RWKind.RMW:
-                        DriveAddressPins();
                         Memory.CPU_Read();
                         break;
                     
                     case RWKind.Read:
-                        DriveAddressPins();
                         Memory.CPU_Read();
                         goto complete;
                         
@@ -1677,7 +1663,7 @@ internal static class OpCodes {
                 Address = (byte)(DB + Register.X);
                 Memory.CPU_Read();
 
-                ADH = Data;
+                ADL = Data;
                 break;
                 
             case 4:
@@ -1730,4 +1716,7 @@ internal static class OpCodes {
     }
     
     #endregion
+
+
+    private static bool _pageOverlap;
 }

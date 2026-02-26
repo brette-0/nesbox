@@ -556,6 +556,7 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal void W4003_PulseX() {
+                Console.WriteLine(Data);
                 var lengthIndex = (Data >> 3) & 0x1F;
                 Length = enabled ? LengthTable[lengthIndex] : (byte)0;
 
@@ -586,7 +587,7 @@ internal static class System {
             private  byte   Period;
             private  bool   Negate;
             private  byte   Shift;
-            private  ushort Timer;
+            internal  ushort Timer;
             internal byte   Length;
         }
         
@@ -832,26 +833,26 @@ internal static class System {
                     }
                     break;
                 
-                case PULSE1_ENVELOPE:  APU.Registers.W4000_Pulse1();   goto SendReadToCart;
-                case PULSE2_ENVELOPE:  APU.Registers.W4004_Pulse2();   goto SendReadToCart;
-                case PULSE1_COUNTER:   APU.Registers.W4001_Pulse1();   goto SendReadToCart;
-                case PULSE2_COUNTER:   APU.Registers.W4005_Pulse2();   goto SendReadToCart;
-                case PULSE1_SWEEP:     APU.Registers.W4002_Pulse1();   goto SendReadToCart;
-                case PULSE2_SWEEP:     APU.Registers.W4006_Pulse2();   goto SendReadToCart;
-                case PULSE1_TIMER:     APU.Registers.W4003_Pulse1();   goto SendReadToCart;
-                case PULSE2_TIMER:     APU.Registers.W4007_Pulse2();   goto SendReadToCart;
+                case PULSE1_ENVELOPE : APU.Registers.W4000_Pulse1();   goto SendReadToCart;
+                case PULSE1_SWEEP    : APU.Registers.W4001_Pulse1();   goto SendReadToCart;
+                case PULSE1_TIMER    : APU.Registers.W4002_Pulse1();   goto SendReadToCart;
+                case PULSE1_COUNTER  : APU.Registers.W4003_Pulse1();   goto SendReadToCart;
+                case PULSE2_ENVELOPE : APU.Registers.W4004_Pulse2();   goto SendReadToCart;
+                case PULSE2_SWEEP    : APU.Registers.W4005_Pulse2();   goto SendReadToCart;
+                case PULSE2_TIMER    : APU.Registers.W4006_Pulse2();   goto SendReadToCart;
+                case PULSE2_COUNTER  : APU.Registers.W4007_Pulse2();   goto SendReadToCart;
                 case TRIANGLE_COUNTER: APU.Registers.W4008_Triangle(); goto SendReadToCart;
-                case TRIANGLE_TIMER:   APU.Registers.W400A_Triangle(); goto SendReadToCart;
-                case TRIANGLE_LINEAR:  APU.Registers.W400B_Triangle(); goto SendReadToCart;
-                case NOISE_ENVELOPE:   APU.Registers.W400C_Noise();    goto SendReadToCart;
-                case NOISE_MODE:       APU.Registers.W400E_Noise();    goto SendReadToCart;
-                case NOISE_COUNTER:    APU.Registers.W400F_Noise();    goto SendReadToCart;
-                case DMC_MODE:         APU.Registers.W4010_DMC();      goto SendReadToCart;
-                case DMC_LOAD:         APU.Registers.W4011_DMC();      goto SendReadToCart;
-                case DMC_ASAMPLE:      APU.Registers.W4012_DMC();      goto SendReadToCart;
-                case DMC_LSAMPLE:      APU.Registers.W4013_DMC();      goto SendReadToCart;
-                case OAMDMA:           PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
-                case CHANNELSTATUS:    APU.Registers.W4015_Status();   goto SendReadToCart;;
+                case TRIANGLE_TIMER  : APU.Registers.W400A_Triangle(); goto SendReadToCart;
+                case TRIANGLE_LINEAR : APU.Registers.W400B_Triangle(); goto SendReadToCart;
+                case NOISE_ENVELOPE  : APU.Registers.W400C_Noise();    goto SendReadToCart;
+                case NOISE_MODE      : APU.Registers.W400E_Noise();    goto SendReadToCart;
+                case NOISE_COUNTER   : APU.Registers.W400F_Noise();    goto SendReadToCart;
+                case DMC_MODE        : APU.Registers.W4010_DMC();      goto SendReadToCart;
+                case DMC_LOAD        : APU.Registers.W4011_DMC();      goto SendReadToCart;
+                case DMC_ASAMPLE     : APU.Registers.W4012_DMC();      goto SendReadToCart;
+                case DMC_LSAMPLE     : APU.Registers.W4013_DMC();      goto SendReadToCart;
+                case OAMDMA          : PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
+                case CHANNELSTATUS   : APU.Registers.W4015_Status();   goto SendReadToCart;;
                 case IODEVICE1:
                     if ((Data & 1) is 0) break;
                     Program.Controller1?.OnWrite();
@@ -945,6 +946,7 @@ internal static class System {
             if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
                 untilNextSample += 1d / SamplingFrequency;
                 SampleBuffer.Add(APU.GetPCMSample());
+                //Console.WriteLine($"PULSE1 enable={Pulse1.enabled} length={Pulse1.Length} timer={Pulse1.Timer}");
             }
 
             if (virtualTime % DOTS_PER_FRAME is 0 && Throttle > 0f) {
@@ -1164,9 +1166,9 @@ internal static class System {
     }
 
 
-    private  static ushort Vector;
+    internal static ushort Vector;
     internal static bool   CPU_IRQ;
-    private  static bool   NMIAsserted;
+    internal static bool   NMIAsserted;
     private static  bool   Reset;
     
     private static  Action OpHandle;
