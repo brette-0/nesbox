@@ -27,11 +27,13 @@ public sealed class Ld65Dbg : API.IDebugFile
         int? Bank, string? OutputName, long? OutputOffs);
 
     public readonly record struct SpanRec(int Id, int Seg, long Start, long Size, int? Type);
+
     public readonly record struct ScopeRec(
         int Id, string Name, int Mod, long? Size, ScopeType? Type, int? Parent, int? Sym, int[]? Spans);
 
+    // FIX: line span can be a '+' list (or absent)
     public readonly record struct LineRec(
-        int Id, int File, long Line, int? Type, int? Count, int? Span);
+        int Id, int File, long Line, int? Type, int? Count, int[]? Spans);
 
     public readonly record struct SymRec(
         int Id, string Name, AddrSize AddrSize, SymKind Type,
@@ -154,7 +156,6 @@ public sealed class Ld65Dbg : API.IDebugFile
                     break;
 
                 case "scope":
-                    var spanList = OptIntListPlus(kv, "span", lineNo);
                     scopes.Add(new ScopeRec(
                         Id: ReqInt(kv, "id", lineNo),
                         Name: ReqStr(kv, "name", lineNo),
@@ -163,7 +164,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Type: OptEnum<ScopeType>(kv, "type", lineNo),
                         Parent: OptInt(kv, "parent", lineNo),
                         Sym: OptInt(kv, "sym", lineNo),
-                        Spans: spanList));
+                        Spans: OptIntListPlus(kv, "span", lineNo)));
                     break;
 
                 case "line":
@@ -173,7 +174,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Line: ReqLong(kv, "line", lineNo),
                         Type: OptInt(kv, "type", lineNo),
                         Count: OptInt(kv, "count", lineNo),
-                        Span: OptInt(kv, "span", lineNo)));
+                        Spans: OptIntListPlus(kv, "span", lineNo))); // FIX
                     break;
 
                 case "sym":
@@ -203,7 +204,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Val: ReqStr(kv, "val", lineNo)));
                     break;
 
-                // this file has csym=0 so you may not see "csym" records; add later if needed
+                // your test file had csym=0 so none present; add later if needed
                 default:
                     throw new FormatException($"Line {lineNo}: unknown record '{rec}'");
             }
