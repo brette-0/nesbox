@@ -108,8 +108,9 @@ internal sealed class BULLCART : API.IFamicomCartridge {
         throw new NotImplementedException();
     }
 
-    public byte ReadByte(ushort address) => ReadByteTask(this, address);
-    public byte CPUReadByte()            => CPUReadByteTask(this);
+    public byte ReadByte(ushort       address) => ReadByteTask(this, address);
+    public int  GetROMLocation(ushort address) => address;
+    public byte CPUReadByte()                  => CPUReadByteTask(this);
 
     public byte[] ProgramROM                    { get => __ProgramROM;   set => __ProgramROM = value; }
     public byte[] CharacterROM                  { get => __CharacterROM; set => __CharacterROM = value ; }

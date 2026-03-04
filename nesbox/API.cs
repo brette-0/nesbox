@@ -85,6 +85,13 @@ internal static class API {
         [Pure] public byte CPUReadByte();
         
         [Pure] public byte ReadByte(ushort address);
+
+        /// <summary>
+        /// This function converts CPU space location into ROM space location
+        /// </summary>
+        /// <param name="address">address in CPU space to find ROM space location for</param>
+        /// <returns>ROM space location of address in CPU space</returns>
+        public int GetROMLocation(ushort address);
         
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
@@ -106,5 +113,10 @@ internal static class API {
         public bool EXP8 { get; set; }
         public bool EXP9 { get; set; }
 
+    }
+
+    internal interface IDebugFile {
+        public int GetSymbol();
+        public int GetAddressMapping();
     }
 }

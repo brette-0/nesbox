@@ -16,9 +16,12 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="AngouriMath" Version="1.4.0" />
       <PackageReference Include="EList" Version="1.0.1" />
+      <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
       <PackageReference Include="NAudio" Version="2.2.1" />
-      <PackageReference Include="SDL3-CS" Version="3.3.2.1" />
+      <PackageReference Include="SDL3-CS" Version="3.3.7" />
+      <PackageReference Include="StringExpressionEvaluator" Version="1.0.0" />
       <PackageReference Include="Vortice.XInput" Version="3.8.2" />
     </ItemGroup>
 

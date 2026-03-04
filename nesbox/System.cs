@@ -903,11 +903,11 @@ internal static class System {
     /// Begin CPU Emulation
     /// </summary>
     internal static void Initialize() {
-        Program.Threads.System = new Thread(RunCPU){IsBackground = false};
+        Program.Threads.System = new Thread(RunSystem){IsBackground = false};
         Program.Threads.System.Start();
     }
     
-    private static void RunCPU() {
+    private static void RunSystem() {
         Console.WriteLine("[CPU] System is Running");
 
         Register.AC = (byte)Random.Shared.Next();
@@ -933,20 +933,25 @@ internal static class System {
 
         var untilNextSample = 1d / SamplingFrequency;
         
+        DoNotProgress:
         while (!Quit) {
-            PPU.Step();
-            Link.TriggerClockDrivenImplementations();
-            if (virtualTime % 3 is 0) {
-                Step();
-                APU.Step();
-                PPU.OAM.DMA();
-                if (Quit) return;
-            }
+            if (Debug.Debugger.debugging) {
+                Thread.Sleep(1000);
+                goto DoNotProgress;
+            } else {
+                PPU.Step();
+                Link.TriggerClockDrivenImplementations();
+                if (virtualTime % 3 is 0) {
+                    Step();
+                    APU.Step();
+                    PPU.OAM.DMA();
+                    if (Quit) return;
+                }
 
-            if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
-                untilNextSample += 1d / SamplingFrequency;
-                SampleBuffer.Add(APU.GetPCMSample());
-                //Console.WriteLine($"PULSE1 enable={Pulse1.enabled} length={Pulse1.Length} timer={Pulse1.Timer}");
+                if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
+                    untilNextSample += 1d / SamplingFrequency;
+                    SampleBuffer.Add(APU.GetPCMSample());
+                }
             }
 
             if (virtualTime % DOTS_PER_FRAME is 0 && Throttle > 0f) {
@@ -1011,7 +1016,7 @@ internal static class System {
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void Step() {
+    internal static void Step() {
         if (RDY) return;
         if (cycle is 0) {
             if (Reset) {
@@ -1050,6 +1055,11 @@ internal static class System {
         
         HandleInstruction:
             OpHandle();
+            #if DEBUG
+            if (cycle is 0xff && OpHandle != Interrupt && OpHandle != StepReset) {
+                Console.WriteLine($"{PC:x4}: {OpCodes.Mnemonics[Register.IR]} {Address:x4} {Data:x2}");
+            }
+            #endif
             cycle++;
     }
 
@@ -1171,7 +1181,7 @@ internal static class System {
     internal static bool   NMIAsserted;
     private static  bool   Reset;
     
-    private static  Action OpHandle;
+    internal static Action OpHandle;
     internal static byte   cycle;
 
     internal static ushort Address;
@@ -1242,4 +1252,7 @@ internal static class System {
     internal static List<float> SampleBuffer = [];
     internal static APU.PulseChannel Pulse1 = new();
     internal static APU.PulseChannel Pulse2 = new();
+    
+    // Debug variables
+    private static string _mnemonic = string.Empty;
 }

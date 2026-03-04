@@ -1,4 +1,6 @@
-﻿using System.Reflection;
+﻿#define I_AM_DEBUG
+
+using System.Reflection;
 using System.Runtime.CompilerServices;
 
 namespace nesbox.CPU;
@@ -8,6 +10,60 @@ using Memory = System.Memory;
 // TODO: Write PHP and PLP (How did you miss this?)
 
 internal static class OpCodes {
+    #if I_AM_DEBUG
+    // ReSharper disable once UnusedMember.Global
+    public static readonly string[] Mnemonics = [
+        /*00*/ "BRK impl","ORA (ind,X)","STP impl","SLO (ind,X)","NOP zp","ORA zp","ASL zp","SLO zp",
+        /*08*/ "PHP impl","ORA imm","ASL A","ANC imm","NOP abs","ORA abs","ASL abs","SLO abs",
+
+        /*10*/ "BPL rel","ORA (ind),Y","STP impl","SLO (ind),Y","NOP zp,X","ORA zp,X","ASL zp,X","SLO zp,X",
+        /*18*/ "CLC impl","ORA abs,Y","NOP impl","SLO abs,Y","NOP abs,X","ORA abs,X","ASL abs,X","SLO abs,X",
+
+        /*20*/ "JSR abs","AND (ind,X)","STP impl","RLA (ind,X)","BIT zp","AND zp","ROL zp","RLA zp",
+        /*28*/ "PLP impl","AND imm","ROL A","ANC imm","BIT abs","AND abs","ROL abs","RLA abs",
+
+        /*30*/ "BMI rel","AND (ind),Y","STP impl","RLA (ind),Y","NOP zp,X","AND zp,X","ROL zp,X","RLA zp,X",
+        /*38*/ "SEC impl","AND abs,Y","NOP impl","RLA abs,Y","NOP abs,X","AND abs,X","ROL abs,X","RLA abs,X",
+
+        /*40*/ "RTI impl","EOR (ind,X)","STP impl","SRE (ind,X)","NOP zp","EOR zp","LSR zp","SRE zp",
+        /*48*/ "PHA impl","EOR imm","LSR A","ALR imm","JMP abs","EOR abs","LSR abs","SRE abs",
+
+        /*50*/ "BVC rel","EOR (ind),Y","STP impl","SRE (ind),Y","NOP zp,X","EOR zp,X","LSR zp,X","SRE zp,X",
+        /*58*/ "CLI impl","EOR abs,Y","NOP impl","SRE abs,Y","NOP abs,X","EOR abs,X","LSR abs,X","SRE abs,X",
+
+        /*60*/ "RTS impl","ADC (ind,X)","STP impl","RRA (ind,X)","NOP zp","ADC zp","ROR zp","RRA zp",
+        /*68*/ "PLA impl","ADC imm","ROR A","ARR imm","JMP ind","ADC abs","ROR abs","RRA abs",
+
+        /*70*/ "BVS rel","ADC (ind),Y","STP impl","RRA (ind),Y","NOP zp,X","ADC zp,X","ROR zp,X","RRA zp,X",
+        /*78*/ "SEI impl","ADC abs,Y","NOP impl","RRA abs,Y","NOP abs,X","ADC abs,X","ROR abs,X","RRA abs,X",
+
+        /*80*/ "NOP imm","STA (ind,X)","NOP imm","SAX (ind,X)","STY zp","STA zp","STX zp","SAX zp",
+        /*88*/ "DEY impl","NOP imm","TXA impl","XAA imm","STY abs","STA abs","STX abs","SAX abs",
+
+        /*90*/ "BCC rel","STA (ind),Y","STP impl","AHX (ind),Y","STY zp,X","STA zp,X","STX zp,Y","SAX zp,Y",
+        /*98*/ "TYA impl","STA abs,Y","TXS impl","TAS abs,Y","SHY abs,X","STA abs,X","SHX abs,Y","AHX abs,Y",
+
+        /*A0*/ "LDY imm","LDA (ind,X)","LDX imm","LAX (ind,X)","LDY zp","LDA zp","LDX zp","LAX zp",
+        /*A8*/ "TAY impl","LDA imm","TAX impl","LAX imm","LDY abs","LDA abs","LDX abs","LAX abs",
+
+        /*B0*/ "BCS rel","LDA (ind),Y","STP impl","LAX (ind),Y","LDY zp,X","LDA zp,X","LDX zp,Y","LAX zp,Y",
+        /*B8*/ "CLV impl","LDA abs,Y","TSX impl","LAS abs,Y","LDY abs,X","LDA abs,X","LDX abs,Y","LAX abs,Y",
+
+        /*C0*/ "CPY imm","CMP (ind,X)","NOP imm","DCP (ind,X)","CPY zp","CMP zp","DEC zp","DCP zp",
+        /*C8*/ "INY impl","CMP imm","DEX impl","AXS imm","CPY abs","CMP abs","DEC abs","DCP abs",
+
+        /*D0*/ "BNE rel","CMP (ind),Y","STP impl","DCP (ind),Y","NOP zp,X","CMP zp,X","DEC zp,X","DCP zp,X",
+        /*D8*/ "CLD impl","CMP abs,Y","NOP impl","DCP abs,Y","NOP abs,X","CMP abs,X","DEC abs,X","DCP abs,X",
+
+        /*E0*/ "CPX imm","SBC (ind,X)","NOP imm","ISC (ind,X)","CPX zp","SBC zp","INC zp","ISC zp",
+        /*E8*/ "INX impl","SBC imm","NOP impl","SBC imm","CPX abs","SBC abs","INC abs","ISC abs",
+
+        /*F0*/ "BEQ rel","SBC (ind),Y","STP impl","ISC (ind),Y","NOP zp,X","SBC zp,X","INC zp,X","ISC zp,X",
+        /*F8*/ "SED impl","SBC abs,Y","NOP impl","ISC abs,Y","NOP abs,X","SBC abs,X","INC abs,X","ISC abs,X"
+    ];
+    #endif
+    
+    
     [Flags]
     private enum FlagChecks : byte {
         c = 1,
@@ -445,7 +501,7 @@ internal static class OpCodes {
         Register.v = (Data & 0x40)              != 0;
     }
 
-    private static readonly unsafe Opcode BIT = new Opcode(&__BIT, RWKind.Read);
+    private static readonly unsafe Opcode BIT = new(&__BIT, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void BRK() {
@@ -941,7 +997,7 @@ internal static class OpCodes {
     }
 
     private static                 void   __NOP() { }
-    private static readonly unsafe Opcode NOP = new Opcode(&__NOP, RWKind.Read);
+    private static readonly unsafe Opcode NOP = new(&__NOP, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __CMP() {
@@ -950,7 +1006,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     } 
     
-    private static readonly unsafe Opcode CMP = new Opcode(&__CMP, RWKind.Read);
+    private static readonly unsafe Opcode CMP = new(&__CMP, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __CPX() {
@@ -958,7 +1014,7 @@ internal static class OpCodes {
         Register.c   = diff               >= 0;
         NonArithmeticProcessorFlagSets(Register.X);
     }
-    private static readonly unsafe Opcode CPX = new Opcode(&__CPX, RWKind.Read);
+    private static readonly unsafe Opcode CPX = new(&__CPX, RWKind.Read);
     
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -968,14 +1024,14 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.Y);
     }
     
-    private static readonly unsafe Opcode CPY = new Opcode(&__CPY, RWKind.Read);
+    private static readonly unsafe Opcode CPY = new(&__CPY, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __DEC() {
         Data--;
         NonArithmeticProcessorFlagSets(Data);
     }
-    private static readonly unsafe Opcode DEC = new Opcode(&__DEC, RWKind.RMW);
+    private static readonly unsafe Opcode DEC = new(&__DEC, RWKind.RMW);
     
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -984,26 +1040,26 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Data);
     }
     
-    private static readonly unsafe Opcode INC = new Opcode(&__INC, RWKind.RMW);
+    private static readonly unsafe Opcode INC = new(&__INC, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __STA() => Data = Register.AC;
-    private static readonly unsafe Opcode STA = new Opcode(&__STA, RWKind.Write);
+    private static readonly unsafe Opcode STA = new(&__STA, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __STX() => Data = Register.X;
-    private static readonly unsafe Opcode STX = new Opcode(&__STX, RWKind.Write);
+    private static readonly unsafe Opcode STX = new(&__STX, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __STY() => Data = Register.Y;
-    private static readonly unsafe Opcode STY = new Opcode(&__STY, RWKind.Write);
+    private static readonly unsafe Opcode STY = new(&__STY, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SLO() {
         __ASL();
         __ORA();
     }
-    private static readonly unsafe Opcode SLO = new Opcode(&__SLO, RWKind.RMW);
+    private static readonly unsafe Opcode SLO = new(&__SLO, RWKind.RMW);
     
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1011,58 +1067,58 @@ internal static class OpCodes {
         __ROL();
         __AND();
     }
-    private static readonly unsafe Opcode RLA = new Opcode(&__RLA, RWKind.RMW);
+    private static readonly unsafe Opcode RLA = new(&__RLA, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SRE() {
         __LSR();
         __EOR();
     }
-    private static readonly unsafe Opcode SRE = new Opcode(&__SRE, RWKind.RMW);
+    private static readonly unsafe Opcode SRE = new(&__SRE, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __RRA() {
         __ROR();
         __ADC();
     }
-    private static readonly unsafe Opcode RRA = new Opcode(&__RRA, RWKind.RMW);
+    private static readonly unsafe Opcode RRA = new(&__RRA, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SAX() => Data = (byte)(Register.AC & Register.X);
-    private static readonly unsafe Opcode SAX = new Opcode(&__SAX, RWKind.Write);
+    private static readonly unsafe Opcode SAX = new(&__SAX, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __DCP() {
         __DEC();
         __CMP();
     }
-    private static readonly unsafe Opcode DCP = new Opcode(&__DCP, RWKind.RMW);
+    private static readonly unsafe Opcode DCP = new(&__DCP, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ISC() {
         __INC();
         __SBC();
     }
-    private static readonly unsafe Opcode ISC = new Opcode(&__ISC, RWKind.RMW);
+    private static readonly unsafe Opcode ISC = new(&__ISC, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHA() => Data = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
-    private static readonly unsafe Opcode SHA = new Opcode(&__SHA, RWKind.Write);
+    private static readonly unsafe Opcode SHA = new(&__SHA, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHX() => Data = (byte)(Register.X  & (1              + (Address >> 8)));
-    private static readonly unsafe Opcode SHX = new Opcode(&__SHX, RWKind.Write);
+    private static readonly unsafe Opcode SHX = new(&__SHX, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHY() => Data = (byte)(Register.Y  & (1              + (Address >> 8)));
-    private static readonly unsafe Opcode SHY = new Opcode(&__SHY, RWKind.Write);
+    private static readonly unsafe Opcode SHY = new(&__SHY, RWKind.Write);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __TAS() {
         Data       = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
         Register.S = (byte)(Register.AC & Register.X);
     }
-    private static readonly unsafe Opcode TAS = new Opcode(&__TAS, RWKind.Write);
+    private static readonly unsafe Opcode TAS = new(&__TAS, RWKind.Write);
    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ROR() {
@@ -1071,7 +1127,7 @@ internal static class OpCodes {
         Register.c = c is 1;
         NonArithmeticProcessorFlagSets(Data);
     }
-    private static readonly unsafe Opcode ROR = new Opcode(&__ROR, RWKind.RMW);
+    private static readonly unsafe Opcode ROR = new(&__ROR, RWKind.RMW);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ROL() {
@@ -1080,7 +1136,7 @@ internal static class OpCodes {
         Register.c = c is 1;
         NonArithmeticProcessorFlagSets(Data);
     }
-    private static readonly unsafe Opcode ROL = new Opcode(&__ROL, RWKind.RMW);
+    private static readonly unsafe Opcode ROL = new(&__ROL, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LSR() {
@@ -1089,7 +1145,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Data);
     }
     
-    private static readonly unsafe Opcode LSR = new Opcode(&__LSR, RWKind.RMW);
+    private static readonly unsafe Opcode LSR = new(&__LSR, RWKind.RMW);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ASL() {
@@ -1098,7 +1154,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Data);
     }
     
-    private static readonly unsafe Opcode ASL = new Opcode(&__ASL, RWKind.RMW);
+    private static readonly unsafe Opcode ASL = new(&__ASL, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ADC() {
@@ -1113,7 +1169,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode ADC = new Opcode(&__ADC, RWKind.Read);
+    private static readonly unsafe Opcode ADC = new(&__ADC, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SBC() {
@@ -1125,7 +1181,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode SBC = new Opcode(&__SBC, RWKind.Read);
+    private static readonly unsafe Opcode SBC = new(&__SBC, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __XAA() {
@@ -1133,7 +1189,7 @@ internal static class OpCodes {
         Register.AC = (byte)((Register.AC | Random.Shared.Next()) & Register.X & Data);
     }
     
-    private static readonly unsafe Opcode XAA = new Opcode(&__XAA, RWKind.Read);
+    private static readonly unsafe Opcode XAA = new(&__XAA, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LAXI() {
@@ -1141,7 +1197,7 @@ internal static class OpCodes {
         Register.AC = Register.X = (byte)((Register.AC | Random.Shared.Next()) & Data);
     }
     
-    private static readonly unsafe Opcode LAXI = new Opcode(&__LAXI, RWKind.Read);
+    private static readonly unsafe Opcode LAXI = new(&__LAXI, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void JAM() {
@@ -1155,7 +1211,7 @@ internal static class OpCodes {
         Register.c = Register.n;
     }
     
-    private static readonly unsafe Opcode ANC = new Opcode(&__ANC, RWKind.Read);
+    private static readonly unsafe Opcode ANC = new(&__ANC, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ALR() {
@@ -1163,7 +1219,7 @@ internal static class OpCodes {
         LSRA();
     }
     
-    private static readonly unsafe Opcode ALR = new Opcode(&__ALR, RWKind.Read);
+    private static readonly unsafe Opcode ALR = new(&__ALR, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void LSRA() {
@@ -1186,7 +1242,7 @@ internal static class OpCodes {
         Register.v = ((Data >> 7) ^ (Data >> 6) & 1) is 1;
         RORA();
     }
-    private static readonly unsafe Opcode ARR = new Opcode(&__ARR, RWKind.Read);
+    private static readonly unsafe Opcode ARR = new(&__ARR, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __AXS() {
@@ -1195,14 +1251,14 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.X);
     }
     
-    private static readonly unsafe Opcode AXS = new Opcode(&__AXS, RWKind.Read);
+    private static readonly unsafe Opcode AXS = new(&__AXS, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LAS() {
         Register.AC = Register.X = Register.S = (byte)(Data & Register.S);
         NonArithmeticProcessorFlagSets(Data);
     }
-    private static readonly unsafe Opcode LAS = new Opcode(&__LAS, RWKind.Write);
+    private static readonly unsafe Opcode LAS = new(&__LAS, RWKind.Write);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void RORA() {
@@ -1226,7 +1282,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode ORA = new Opcode(&__ORA, RWKind.Read);
+    private static readonly unsafe Opcode ORA = new(&__ORA, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __AND() {
@@ -1234,7 +1290,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode AND = new Opcode(&__AND, RWKind.Read);
+    private static readonly unsafe Opcode AND = new(&__AND, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __EOR() {
@@ -1242,7 +1298,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode EOR = new Opcode(&__EOR, RWKind.Read);
+    private static readonly unsafe Opcode EOR = new(&__EOR, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LDA() {
@@ -1250,7 +1306,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
-    private static readonly unsafe Opcode LDA = new Opcode(&__LDA, RWKind.Read);
+    private static readonly unsafe Opcode LDA = new(&__LDA, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LDX() {
@@ -1258,7 +1314,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.X);
     }
     
-    private static readonly unsafe Opcode LDX = new Opcode(&__LDX, RWKind.Read);
+    private static readonly unsafe Opcode LDX = new(&__LDX, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LDY() {
@@ -1266,7 +1322,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.Y);
     }
     
-    private static readonly unsafe Opcode LDY = new Opcode(&__LDY, RWKind.Read);
+    private static readonly unsafe Opcode LDY = new(&__LDY, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LAX() {
@@ -1274,7 +1330,7 @@ internal static class OpCodes {
         NonArithmeticProcessorFlagSets(Register.X);
     }
     
-    private static readonly unsafe Opcode LAX = new Opcode(&__LAX, RWKind.Read);
+    private static readonly unsafe Opcode LAX = new(&__LAX, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void NonArithmeticProcessorFlagSets(byte ctx) {

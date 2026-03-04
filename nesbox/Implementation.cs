@@ -2,6 +2,7 @@
 
 using nesbox.Mappers;
 using nesbox.IO;
+using nesbox.Debug;
 
 namespace nesbox;
 
@@ -21,8 +22,19 @@ internal static class Implementation {
         Link.Subscribe.ControllerToPort(0, ref Controller1);
         while (args.MoveNext()) {
             switch (args.Current) {
+                case "--debugFile":
+                    if (args.MoveNext()) {
+                        Program.DebugFile = new ca65DebugFile(args.Current);
+                        if (System.Quit) break;
+                    } 
+                    
+                    Console.WriteLine("[CART] No argument supplied for Debug File");
+                    System.Quit = true;
+                    break;
+                
                 default:
                     Console.WriteLine($"[CART] Unexpected Argument {args.Current}");
+                    System.Quit = true;
                     break;
             }
         }

@@ -123,10 +123,11 @@ internal static class Program {
     
     internal static readonly SemaphoreSlim Semaphore = new SemaphoreSlim(0);
 
-    internal static API.ICartridge Cartridge { get; private set; } = null!;
-    internal static API.IIO?       Controller1;
-    internal static API.IIO?       Controller2;
-    internal static bool           isFamicom;
+    internal static API.IDebugFile? DebugFile;
+    internal static API.ICartridge  Cartridge { get; private set; } = null!;
+    internal static API.IIO?        Controller1;
+    internal static API.IIO?        Controller2;
+    internal static bool            isFamicom;
     
     internal static class Config {
         internal static bool Strict;
