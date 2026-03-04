@@ -1,374 +1,334 @@
-﻿using System.Globalization;
+﻿using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using nesbox;
 
-namespace nesbox.Debug;
+#nullable enable
 
-public class ca65DebugFile : API.IDebugFile {
-    public ca65DebugFile(string fp) {
-        var lines = global::System.IO.File.ReadAllLines(fp);
+public sealed class Ld65Dbg : API.IDebugFile
+{
+    // ---------- enums ----------
+    public enum AddrSize { Zeropage, Absolute, Long }
+    public enum SegPerm { Ro, Rw }
+    public enum ScopeType { Global, File, Scope, Struct, Enum }
+    public enum SymKind { Equ, Imp, Lab } // ld65 uses: equ/imp/lab
 
-        if (lines[0] is not "info\tversion major=2,minor=0") goto fail;
+    // ---------- records ----------
+    public readonly record struct VersionRec(int Major, int Minor);
+    public readonly record struct InfoRec(int Csym, int File, int Lib, int Line, int Mod, int Scope, int Seg, int Span, int Sym, int Type);
 
-        var elem = lines[1].Split('\t');
-        if (elem[0] is not "info") goto fail;
+    public readonly record struct FileRec(int Id, string Name, long Size, long MTime, int Mod);
+    public readonly record struct ModRec(int Id, string Name, int File, int? Lib);
+    public readonly record struct LibRec(int Id, string Name);
 
-        Parse(elem[1], out var info);
-        string? meta;
-        
-        if (!info.TryGetValue("csym",  out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nCSymbols))  goto fail;
-        if (!info.TryGetValue("file",  out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nFiles))     goto fail;
-        if (!info.TryGetValue("lib",   out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nLibs))      goto fail;
-        if (!info.TryGetValue("line",  out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nLines))     goto fail;
-        if (!info.TryGetValue("mod",   out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nMods))      goto fail;
-        if (!info.TryGetValue("scope", out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nScopes))    goto fail;
-        if (!info.TryGetValue("seg",   out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nSegments))  goto fail;
-        if (!info.TryGetValue("span",  out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nSpans))     goto fail;
-        if (!info.TryGetValue("sym",   out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nSymbols))   goto fail;
-        if (!info.TryGetValue("type",  out meta))                            goto fail;
-        if (!int.TryParse(meta, NumberStyles.Integer, null, out nTypes))     goto fail;
+    public readonly record struct SegRec(
+        int Id, string Name, long Start, long Size, AddrSize AddrSize, SegPerm Type,
+        int? Bank, string? OutputName, long? OutputOffs);
 
-        var i = 2;
-        for (var f = 0; f < nFiles; f++) {
-            elem = lines[i + f].Split('\t');
-            if (elem[0] is not "file") goto fail;
-            Parse(elem[1], out var file);
+    public readonly record struct SpanRec(int Id, int Seg, long Start, long Size, int? Type);
+    public readonly record struct ScopeRec(
+        int Id, string Name, int Mod, long? Size, ScopeType? Type, int? Parent, int? Sym, int[]? Spans);
 
-            var fileObj = new File();
-            if (!file.TryGetValue("id",    out meta))                               goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out fileObj.id))    goto fail;
-            if (fileObj.id != f) goto fail;
-            if (!file.TryGetValue("name",  out meta))                               goto fail;
-            if (meta.Length < 3) goto fail;
-            fileObj.name = meta[1..1];
-            if (!file.TryGetValue("size",  out meta))                               goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out fileObj.size))  goto fail;
-            if (!file.TryGetValue("mtime", out meta))                               goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out fileObj.mtime)) goto fail;
-            if (!file.TryGetValue("mod",   out meta))                               goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out fileObj.mod))   goto fail;
-            
-            Files.Add(fileObj);
-        } i += nFiles;
+    public readonly record struct LineRec(
+        int Id, int File, long Line, int? Type, int? Count, int? Span);
 
-        for (var l = 0; l < nLines; l++) {
-            elem = lines[i + l].Split('\t');
-            if (elem[0] is not "line") goto fail;
-            
-            Parse(elem[1], out var line);
-            var lineObj = new Line();
-            if (!line.TryGetValue("id",    out meta))                                      goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out lineObj.id))           goto fail;
-            if (lineObj.id != l) goto fail;
-            if (!line.TryGetValue("file",  out meta))                                      goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out lineObj.file))         goto fail;
-            if (!line.TryGetValue("line",   out meta))                                     goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out lineObj.line))         goto fail;
-            if (line.TryGetValue("type", out meta)) {
-                if (!int.TryParse(meta, NumberStyles.Integer, null, out var lineObjType))  goto fail;
-                lineObj.type = lineObjType;
-                if (!line.TryGetValue("count",   out meta))                                goto fail;
-                if (!int.TryParse(meta, NumberStyles.Integer, null, out var lineObjCount)) goto fail;
-                lineObj.count = lineObjCount;
+    public readonly record struct SymRec(
+        int Id, string Name, AddrSize AddrSize, SymKind Type,
+        long? Val, long? Size, int? Seg, int? Scope, int? Parent,
+        int[]? Defs, int[]? Refs);
+
+    public readonly record struct TypeRec(int Id, string Val);
+
+    // ---------- outputs ----------
+    public VersionRec Version { get; }
+    public InfoRec Info { get; }
+
+    public FileRec[] Files { get; }
+    public ModRec[] Mods { get; }
+    public LibRec[] Libs { get; }
+    public SegRec[] Segs { get; }
+    public SpanRec[] Spans { get; }
+    public ScopeRec[] Scopes { get; }
+    public LineRec[] Lines { get; }
+    public SymRec[] Syms { get; }
+    public TypeRec[] Types { get; }
+
+    public Ld65Dbg(string filepath)
+    {
+        var files = new List<FileRec>();
+        var mods = new List<ModRec>();
+        var libs = new List<LibRec>();
+        var segs = new List<SegRec>();
+        var spans = new List<SpanRec>();
+        var scopes = new List<ScopeRec>();
+        var lines = new List<LineRec>();
+        var syms = new List<SymRec>();
+        var types = new List<TypeRec>();
+
+        VersionRec? version = null;
+        InfoRec? info = null;
+
+        int lineNo = 0;
+        foreach (var raw in File.ReadLines(filepath))
+        {
+            lineNo++;
+            var line = raw.TrimEnd();
+            if (line.Length == 0 || line[0] == '#') continue;
+
+            int tab = line.IndexOf('\t');
+            string rec = (tab >= 0 ? line[..tab] : line).Trim().ToLowerInvariant();
+            string rest = tab >= 0 ? line[(tab + 1)..] : "";
+
+            var kv = ParseKv(rest, lineNo);
+
+            switch (rec)
+            {
+                case "version":
+                    version = new VersionRec(
+                        ReqInt(kv, "major", lineNo),
+                        ReqInt(kv, "minor", lineNo));
+                    break;
+
+                case "info":
+                    info = new InfoRec(
+                        ReqInt(kv, "csym", lineNo),
+                        ReqInt(kv, "file", lineNo),
+                        ReqInt(kv, "lib", lineNo),
+                        ReqInt(kv, "line", lineNo),
+                        ReqInt(kv, "mod", lineNo),
+                        ReqInt(kv, "scope", lineNo),
+                        ReqInt(kv, "seg", lineNo),
+                        ReqInt(kv, "span", lineNo),
+                        ReqInt(kv, "sym", lineNo),
+                        ReqInt(kv, "type", lineNo));
+                    break;
+
+                case "file":
+                    files.Add(new FileRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo),
+                        Size: ReqLong(kv, "size", lineNo),
+                        MTime: ReqLong(kv, "mtime", lineNo),
+                        Mod: ReqInt(kv, "mod", lineNo)));
+                    break;
+
+                case "mod":
+                    mods.Add(new ModRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo),
+                        File: ReqInt(kv, "file", lineNo),
+                        Lib: OptInt(kv, "lib", lineNo)));
+                    break;
+
+                case "lib":
+                    libs.Add(new LibRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo)));
+                    break;
+
+                case "seg":
+                    segs.Add(new SegRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo),
+                        Start: ReqLong(kv, "start", lineNo),
+                        Size: ReqLong(kv, "size", lineNo),
+                        AddrSize: ReqEnum<AddrSize>(kv, "addrsize", lineNo),
+                        Type: ReqEnum<SegPerm>(kv, "type", lineNo),
+                        Bank: OptInt(kv, "bank", lineNo),
+                        OutputName: OptStr(kv, "outputname"),
+                        OutputOffs: OptLong(kv, "outputoffs", lineNo)
+                    ));
+                    // paired constraint if either exists
+                    if ((OptStr(kv, "outputname") is null) != (OptLong(kv, "outputoffs", lineNo) is null))
+                        throw new FormatException($"Line {lineNo}: outputname and outputoffs must appear together");
+                    break;
+
+                case "span":
+                    spans.Add(new SpanRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Seg: ReqInt(kv, "seg", lineNo),
+                        Start: ReqLong(kv, "start", lineNo),
+                        Size: ReqLong(kv, "size", lineNo),
+                        Type: OptInt(kv, "type", lineNo)));
+                    break;
+
+                case "scope":
+                    var spanList = OptIntListPlus(kv, "span", lineNo);
+                    scopes.Add(new ScopeRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo),
+                        Mod: ReqInt(kv, "mod", lineNo),
+                        Size: OptLong(kv, "size", lineNo),
+                        Type: OptEnum<ScopeType>(kv, "type", lineNo),
+                        Parent: OptInt(kv, "parent", lineNo),
+                        Sym: OptInt(kv, "sym", lineNo),
+                        Spans: spanList));
+                    break;
+
+                case "line":
+                    lines.Add(new LineRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        File: ReqInt(kv, "file", lineNo),
+                        Line: ReqLong(kv, "line", lineNo),
+                        Type: OptInt(kv, "type", lineNo),
+                        Count: OptInt(kv, "count", lineNo),
+                        Span: OptInt(kv, "span", lineNo)));
+                    break;
+
+                case "sym":
+                    int? scope = OptInt(kv, "scope", lineNo);
+                    int? parent = OptInt(kv, "parent", lineNo);
+                    if ((scope is null) == (parent is null))
+                        throw new FormatException($"Line {lineNo}: sym must have exactly one of scope= or parent=");
+
+                    syms.Add(new SymRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Name: ReqStr(kv, "name", lineNo),
+                        AddrSize: ReqEnum<AddrSize>(kv, "addrsize", lineNo),
+                        Type: ReqEnum<SymKind>(kv, "type", lineNo),
+                        Val: OptLong(kv, "val", lineNo),
+                        Size: OptLong(kv, "size", lineNo),
+                        Seg: OptInt(kv, "seg", lineNo),
+                        Scope: scope,
+                        Parent: parent,
+                        Defs: OptIntListPlus(kv, "def", lineNo),
+                        Refs: OptIntListPlus(kv, "ref", lineNo)
+                    ));
+                    break;
+
+                case "type":
+                    types.Add(new TypeRec(
+                        Id: ReqInt(kv, "id", lineNo),
+                        Val: ReqStr(kv, "val", lineNo)));
+                    break;
+
+                // this file has csym=0 so you may not see "csym" records; add later if needed
+                default:
+                    throw new FormatException($"Line {lineNo}: unknown record '{rec}'");
             }
-            if (!line.TryGetValue("span",   out meta))                                     continue;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out var lineObjSpan))      goto fail;
-            lineObj.span = lineObjSpan;
-            Lines.Add(lineObj);
-        } i += nLines;
-
-        for (var m = 0; m < nMods; m++) {
-            elem = lines[i + m].Split('\t');
-            if (elem[0] is not "mod") goto fail;
-            var modObj = new Mod();
-            
-            Parse(elem[1], out var mod);
-            if (!mod.TryGetValue("id",   out meta))                                      goto fail;
-            if (modObj.id != m) goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out modObj.id))          goto fail;
-            if (!mod.TryGetValue("name", out meta))                                      goto fail;
-            if (meta.Length < 3) goto fail;
-            modObj.name = meta[1..1];
-            if (!mod.TryGetValue("file", out meta))                                      goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out modObj.file))        goto fail;
-            Mods.Add(modObj);
-        } i += nMods;
-
-        for (var s = 0; s < nSegments; s++) {
-            elem = lines[i + s].Split('\t');
-            if (elem[0] is not "seg") goto fail;
-            var segObj = new Segment();
-            
-            Parse(elem[1], out var seg);
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out segObj.id))               goto fail;
-            if (!seg.TryGetValue("id",     out meta))                                         goto fail;
-            if (segObj.id != s) goto fail;
-            if (!seg.TryGetValue("name",     out meta))                                       goto fail;
-            if (meta.Length < 3) goto fail;
-            segObj.name = meta[1..1];
-            if (!seg.TryGetValue("start",    out meta))                                       goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out segObj.start))            goto fail;
-            if (!seg.TryGetValue("size",     out meta))                                       goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out segObj.size))             goto fail;
-            if (!seg.TryGetValue("addrsize", out meta))                                       goto fail;
-            segObj.addressSize = meta switch {
-                "absolute" => AddressSize.Absolute,
-                "zeropage" => AddressSize.ZeroPage,
-                _          => AddressSize.Fail
-            };
-            if (segObj.addressSize is AddressSize.Fail) goto fail;
-            if (!seg.TryGetValue("type", out meta))                                           goto fail;
-            segObj.type = meta switch {
-                "rw" => SegmentType.RW,
-                "ro" => SegmentType.RO,
-                _    => SegmentType.Fail
-            };
-            if (segObj.type is SegmentType.Fail) goto fail;
-            if (seg.TryGetValue("oname",      out meta)) {
-                if (segObj.type is not SegmentType.RO) goto fail;
-                if (meta.Length < 3) goto fail;
-                segObj.outFileName = meta[1..1];
-                if (!seg.TryGetValue("ooffs", out meta))                                      goto fail;
-                if (!int.TryParse(meta, NumberStyles.Integer, null, out var segObjOutOffset)) goto fail;
-                segObj.outOffset = segObjOutOffset;
-            }
-            Segments.Add(segObj);
-        } i += nSegments;
-
-        for (var s = 0; s < nSpans; s++) {
-            elem = lines[i + s].Split('\t');
-            if (elem[0] is not "span") goto fail;
-            var spanObj = new Span();
-            
-            Parse(elem[1], out var span);
-            if (!span.TryGetValue("id",   out meta))                                  goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out spanObj.id))      goto fail;
-            if (spanObj.id != s) goto fail;
-            if (!span.TryGetValue("seg",   out meta))                                 goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out spanObj.segment)) goto fail;
-            if (!span.TryGetValue("start",   out meta))                               goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out spanObj.start))   goto fail;
-            if (!span.TryGetValue("size",   out meta))                                goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out spanObj.size))    goto fail;
-            if (!span.TryGetValue("type",   out meta))                                goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out var spanObjType)) goto fail;
-            spanObj.type = spanObjType;
-            Spans.Add(spanObj);
-        } i += nSpans;
-
-        var hasFoundTopLevel = false;
-        for (var s = 0; s < nScopes; s++) {
-            elem = lines[i + s].Split('\t');
-            if (elem[0] is not "scope") goto fail;
-            
-            var scopeObj = new Scope();
-            Parse(elem[1], out var scope);
-            if (!scope.TryGetValue("id",   out meta))                                  goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.id))      goto fail;
-            if (scopeObj.id != s) goto fail;
-            if (!scope.TryGetValue("name",     out meta))                              goto fail;
-            if (meta is @"""" && !hasFoundTopLevel) {
-                scopeObj.name    = string.Empty;
-                hasFoundTopLevel = true;
-            } else {
-                if (meta.Length < 3) goto fail;
-                scopeObj.name = meta[1..1];
-            }
-            if (!scope.TryGetValue("mod",   out meta))                                 goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.mod))     goto fail;
-            if (!scope.TryGetValue("name",     out meta))                              goto fail;
-            scopeObj.type = meta switch {
-                "scope" => ScopeType.Scope,
-
-                _ => ScopeType.Scope
-            };
-            if (scopeObj.type is ScopeType.Fail) goto fail;
-            if (!scope.TryGetValue("size",   out meta))                                goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.size))    goto fail;
-            if (!scope.TryGetValue("parent", out meta))                                goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.parent))  goto fail;
-            if (!scope.TryGetValue("sym",   out meta))                                 goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.sym))     goto fail;
-            if (!scope.TryGetValue("span",  out meta))                                 goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out scopeObj.span))    goto fail;
-            Scopes.Add(scopeObj);
-        } i += nScopes;
-
-        for (var s = 0; s < nSymbols; s++) {
-            
-        } i += nSymbols;
-
-        for (var t = 0; t < nTypes; t++) {
-            elem = lines[i + t].Split('\t');
-            if (elem[0] is not "type") goto fail;
-            
-            var typeObj = new Type();
-            Parse(elem[1], out var type);
-            if (!type.TryGetValue("id",   out meta))                            goto fail;
-            if (!int.TryParse(meta, NumberStyles.Integer, null, out typeObj.id)) goto fail;
-            if (typeObj.id != t) goto fail;
-            if (!type.TryGetValue("val",     out meta))                           goto fail;
-            if (meta.Length < 3) goto fail;
-            typeObj.value = meta[1..1];
-            Types.Add(typeObj);
         }
 
-        if (CSymbols.Count != nCSymbols ||
-            Files.Count    != nFiles    ||
-            Lines.Count    != nLines    ||
-            Mods.Count     != nMods     ||
-            Segments.Count != nSegments ||
-            Spans.Count    != nSpans    ||
-            Scopes.Count   != nScopes   ||
-            Symbols.Count  != nSymbols  ||
-            Types.Count    != nTypes) goto fail;
-        
-        Console.WriteLine("[DBG] Successfully parsed ca65 debug file");
-        return;
-            
-        fail: System.Quit = true;
+        Version = version ?? throw new FormatException("Missing version record");
+        Info = info ?? throw new FormatException("Missing info record");
+
+        Files = files.ToArray();
+        Mods = mods.ToArray();
+        Libs = libs.ToArray();
+        Segs = segs.ToArray();
+        Spans = spans.ToArray();
+        Scopes = scopes.ToArray();
+        Lines = lines.ToArray();
+        Syms = syms.ToArray();
+        Types = types.ToArray();
     }
 
-    private static void Parse(string line, out Dictionary<string, string> parsed) {
-        parsed = new();
-        foreach (var field in line.Split(',')) {
-            parsed[field[..field.IndexOf('=')]] = field[(field.IndexOf('=') + 1)..];
+    // ---------- parsing helpers ----------
+    private static Dictionary<string, string> ParseKv(string s, int lineNo)
+    {
+        var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int i = 0;
+        while (true)
+        {
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            if (i >= s.Length) break;
+
+            int k0 = i;
+            while (i < s.Length && s[i] != '=' && s[i] != ',') i++;
+            if (i >= s.Length || s[i] != '=') throw new FormatException($"Line {lineNo}: expected key=value");
+            string key = s[k0..i].Trim().ToLowerInvariant();
+            i++; // '='
+
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            string val;
+            if (i < s.Length && s[i] == '"')
+            {
+                i++;
+                var sb = new System.Text.StringBuilder();
+                while (i < s.Length)
+                {
+                    char c = s[i++];
+                    if (c == '"') break;
+                    if (c == '\\' && i < s.Length) sb.Append(s[i++]);
+                    else sb.Append(c);
+                }
+                val = sb.ToString();
+            }
+            else
+            {
+                int v0 = i;
+                while (i < s.Length && s[i] != ',') i++;
+                val = s[v0..i].Trim();
+            }
+
+            if (!kv.TryAdd(key, val))
+                throw new FormatException($"Line {lineNo}: duplicate key '{key}'");
+
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            if (i >= s.Length) break;
+            if (s[i] != ',') throw new FormatException($"Line {lineNo}: expected ','");
+            i++;
         }
+        return kv;
     }
 
-    public enum AddressSize : byte {
-        Absolute,
-        ZeroPage,
-        
-        Fail = 255
-    }
-    
-    public enum SegmentType : byte {
-        RW,
-        RO,
-        
-        Fail = 255
+    private static string ReqStr(Dictionary<string, string> kv, string key, int lineNo)
+        => kv.TryGetValue(key, out var v) ? v : throw new FormatException($"Line {lineNo}: missing '{key}'");
+
+    private static string? OptStr(Dictionary<string, string> kv, string key)
+        => kv.TryGetValue(key, out var v) ? v : null;
+
+    private static int ReqInt(Dictionary<string, string> kv, string key, int lineNo)
+        => (int)ReqLong(kv, key, lineNo);
+
+    private static int? OptInt(Dictionary<string, string> kv, string key, int lineNo)
+        => kv.TryGetValue(key, out var v) ? (int)ParseLong(v, lineNo, key) : null;
+
+    private static long ReqLong(Dictionary<string, string> kv, string key, int lineNo)
+        => kv.TryGetValue(key, out var v) ? ParseLong(v, lineNo, key) : throw new FormatException($"Line {lineNo}: missing '{key}'");
+
+    private static long? OptLong(Dictionary<string, string> kv, string key, int lineNo)
+        => kv.TryGetValue(key, out var v) ? ParseLong(v, lineNo, key) : null;
+
+    private static long ParseLong(string v, int lineNo, string key)
+    {
+        v = v.Trim();
+        if (v.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return long.Parse(v[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        if (v.StartsWith("$", StringComparison.Ordinal))
+            return long.Parse(v[1..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        if (long.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var dec))
+            return dec;
+        throw new FormatException($"Line {lineNo}: bad number for {key}='{v}'");
     }
 
-    public enum ScopeType : byte {
-        Scope,
-        
-        
-        Fail = 255
+    private static T ReqEnum<T>(Dictionary<string, string> kv, string key, int lineNo) where T : struct, Enum
+    {
+        if (!kv.TryGetValue(key, out var v)) throw new FormatException($"Line {lineNo}: missing '{key}'");
+        return ParseEnum<T>(v, lineNo, key);
     }
 
-    public enum SymbolType : byte {
-        Label,
-        Equal,
-        
-        Fail = 255
+    private static T? OptEnum<T>(Dictionary<string, string> kv, string key, int lineNo) where T : struct, Enum
+        => kv.TryGetValue(key, out var v) ? ParseEnum<T>(v, lineNo, key) : null;
+
+    private static T ParseEnum<T>(string v, int lineNo, string key) where T : struct, Enum
+    {
+        // ld65 values are lowercase keywords; map to PascalCase enum names
+        string norm = v.Trim().ToLowerInvariant();
+        norm = char.ToUpperInvariant(norm[0]) + norm[1..];
+        if (Enum.TryParse<T>(norm, ignoreCase: true, out var e)) return e;
+        throw new FormatException($"Line {lineNo}: bad enum for {key}='{v}'");
     }
 
-    public struct CSymbol {
-        
+    private static int[]? OptIntListPlus(Dictionary<string, string> kv, string key, int lineNo)
+    {
+        if (!kv.TryGetValue(key, out var v)) return null;
+        var parts = v.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var arr = new int[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            arr[i] = (int)ParseLong(parts[i], lineNo, key);
+        return arr;
     }
-    
-    public struct Type {
-        public int    id;
-        public string value;
-    }
-
-    public struct Symbol {
-        public int         id;
-        public string      name;
-        public AddressSize addressSize;
-        public int         parent;
-        public int         define;
-        public int         reference;
-        public int         value;
-        public int         segment;
-        public SymbolType  type;
-        public int?        scope;
-    }
-
-    public struct Scope {
-        public int       id;
-        public string    name;
-        public int       mod;
-        public ScopeType type;
-        public int       size;
-        public int       parent;
-        public int       sym;
-        public int       span;
-    }
-
-    public struct Span {
-        public int  id;
-        public int  segment;
-        public int  start;
-        public int  size;
-        public int? type;
-    }
-
-    public struct Segment {
-        public int         id;
-        public string      name;
-        public int         start;
-        public int         size;
-        public AddressSize addressSize;
-        public SegmentType type;
-        public string?     outFileName;
-        public int?        outOffset;
-    }
-
-    public struct Mod {
-        public int    id;
-        public string name;
-        public int    file;
-    }
-    
-    public struct Line {
-        public int  id;
-        public int  file;
-        public int  line;
-        public int? type;
-        public int? count;
-        public int? span;
-    }
-
-    public struct File {
-        public int    id;
-        public string name;
-        public int    size;
-        public int    mtime;
-        public int    mod;
-    }
-    
-    // meta
-    public int nCSymbols;
-    public int nFiles;
-    public int nLibs;
-    public int nLines;
-    public int nMods;
-    public int nScopes;
-    public int nSegments;
-    public int nSpans;
-    public int nSymbols;
-    public int nTypes;
-    
-    // content
-    public readonly List<CSymbol> CSymbols = [];
-    public readonly List<File>    Files    = [];
-    public readonly List<Line>    Lines    = [];
-    public readonly List<Mod>     Mods     = [];
-    public readonly List<Segment> Segments = [];
-    public readonly List<Span>    Spans    = [];
-    public readonly List<Scope>   Scopes   = [];
-    public readonly List<Symbol>  Symbols  = [];
-    public readonly List<Type>    Types    = [];
-
 
     public int GetSymbol() {
         throw new NotImplementedException();
