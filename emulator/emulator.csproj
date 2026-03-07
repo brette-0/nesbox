@@ -5,6 +5,7 @@
         <InvariantGlobalization>true</InvariantGlobalization>
         <IsPackable>false</IsPackable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RootNamespace>nesbox</RootNamespace>
     </PropertyGroup>
 
 
