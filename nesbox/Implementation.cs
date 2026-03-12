@@ -24,7 +24,7 @@ internal static class Implementation {
             switch (args.Current) {
                 case "--debugFile":
                     if (args.MoveNext()) {
-                        Program.DebugFile = new Ld65Dbg(args.Current);
+                        var dbgFile = new Ld65Dbg<int>(args.Current);
                         if (System.Quit) break;
                     } 
                     

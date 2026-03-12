@@ -1,13 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using nesbox;
+﻿using System.Globalization;
+using System.Numerics;
 
-#nullable enable
+namespace nesbox.Debug;
 
-public sealed class Ld65Dbg : API.IDebugFile
-{
+public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryInteger<T> {
+    private IDictionary<T, API.Debugging.ILine>   _lines;
+    private IDictionary<int, API.Debugging.ISpan> _spans;
+
     // ---------- enums ----------
     public enum AddrSize { Zeropage, Absolute, Long }
     public enum SegPerm { Ro, Rw }
@@ -16,14 +15,14 @@ public sealed class Ld65Dbg : API.IDebugFile
 
     // ---------- records ----------
     public readonly record struct VersionRec(int Major, int Minor);
-    public readonly record struct InfoRec(int Csym, int File, int Lib, int Line, int Mod, int Scope, int Seg, int Span, int Sym, int Type);
+    public readonly record struct InfoRec(int    Csym,  int File, int Lib, int Line, int Mod, int Scope, int Seg, int Span, int Sym, int Type);
 
     public readonly record struct FileRec(int Id, string Name, long Size, long MTime, int Mod);
-    public readonly record struct ModRec(int Id, string Name, int File, int? Lib);
-    public readonly record struct LibRec(int Id, string Name);
+    public readonly record struct ModRec(int  Id, string Name, int  File, int? Lib);
+    public readonly record struct LibRec(int  Id, string Name);
 
     public readonly record struct SegRec(
-        int Id, string Name, long Start, long Size, AddrSize AddrSize, SegPerm Type,
+        int  Id,   string  Name,       long  Start, long Size, AddrSize AddrSize, SegPerm Type,
         int? Bank, string? OutputName, long? OutputOffs);
 
     public readonly record struct SpanRec(int Id, int Seg, long Start, long Size, int? Type);
@@ -36,40 +35,47 @@ public sealed class Ld65Dbg : API.IDebugFile
         int Id, int File, long Line, int? Type, int? Count, int[]? Spans);
 
     public readonly record struct SymRec(
-        int Id, string Name, AddrSize AddrSize, SymKind Type,
-        long? Val, long? Size, int? Seg, int? Scope, int? Parent,
+        int    Id,   string Name, AddrSize AddrSize, SymKind Type,
+        long?  Val,  long?  Size, int?     Seg,      int?    Scope, int? Parent,
         int[]? Defs, int[]? Refs);
 
     public readonly record struct TypeRec(int Id, string Val);
 
     // ---------- outputs ----------
     public VersionRec Version { get; }
-    public InfoRec Info { get; }
+    public InfoRec    Info    { get; }
 
-    public FileRec[] Files { get; }
-    public ModRec[] Mods { get; }
-    public LibRec[] Libs { get; }
-    public SegRec[] Segs { get; }
-    public SpanRec[] Spans { get; }
-    public ScopeRec[] Scopes { get; }
-    public LineRec[] Lines { get; }
-    public SymRec[] Syms { get; }
-    public TypeRec[] Types { get; }
+    public FileRec[]                                                 Files   { get; }
+    public ModRec[]                                                  Mods    { get; }
+    public LibRec[]                                                  Libs    { get; }
+    public SegRec[]                                                  Segs    { get; }
+
+    IDictionary<T, API.Debugging.ILine> API.Debugging.IDebugFile<T>.Lines   => _lines;
+    public IReadOnlyList<API.Debugging.ISymbol>                     Symbols { get; }
+
+
+    IDictionary<int, API.Debugging.ISpan> API.Debugging.IDebugFile<T>.Spans => _spans;
+
+    public SpanRec[]                                                 Spans   { get; }
+    public ScopeRec[]                                                Scopes  { get; }
+    public LineRec[]                                                 Lines   { get; }
+    public SymRec[]                                                  Syms    { get; }
+    public TypeRec[]                                                 Types   { get; }
 
     public Ld65Dbg(string filepath)
     {
-        var files = new List<FileRec>();
-        var mods = new List<ModRec>();
-        var libs = new List<LibRec>();
-        var segs = new List<SegRec>();
-        var spans = new List<SpanRec>();
+        var files  = new List<FileRec>();
+        var mods   = new List<ModRec>();
+        var libs   = new List<LibRec>();
+        var segs   = new List<SegRec>();
+        var spans  = new List<SpanRec>();
         var scopes = new List<ScopeRec>();
-        var lines = new List<LineRec>();
-        var syms = new List<SymRec>();
-        var types = new List<TypeRec>();
+        var lines  = new List<LineRec>();
+        var syms   = new List<SymRec>();
+        var types  = new List<TypeRec>();
 
         VersionRec? version = null;
-        InfoRec? info = null;
+        InfoRec?    info    = null;
 
         int lineNo = 0;
         foreach (var raw in File.ReadLines(filepath))
@@ -78,8 +84,8 @@ public sealed class Ld65Dbg : API.IDebugFile
             var line = raw.TrimEnd();
             if (line.Length == 0 || line[0] == '#') continue;
 
-            int tab = line.IndexOf('\t');
-            string rec = (tab >= 0 ? line[..tab] : line).Trim().ToLowerInvariant();
+            int    tab  = line.IndexOf('\t');
+            string rec  = (tab >= 0 ? line[..tab] : line).Trim().ToLowerInvariant();
             string rest = tab >= 0 ? line[(tab + 1)..] : "";
 
             var kv = ParseKv(rest, lineNo);
@@ -94,23 +100,23 @@ public sealed class Ld65Dbg : API.IDebugFile
 
                 case "info":
                     info = new InfoRec(
-                        ReqInt(kv, "csym", lineNo),
-                        ReqInt(kv, "file", lineNo),
-                        ReqInt(kv, "lib", lineNo),
-                        ReqInt(kv, "line", lineNo),
-                        ReqInt(kv, "mod", lineNo),
+                        ReqInt(kv, "csym",  lineNo),
+                        ReqInt(kv, "file",  lineNo),
+                        ReqInt(kv, "lib",   lineNo),
+                        ReqInt(kv, "line",  lineNo),
+                        ReqInt(kv, "mod",   lineNo),
                         ReqInt(kv, "scope", lineNo),
-                        ReqInt(kv, "seg", lineNo),
-                        ReqInt(kv, "span", lineNo),
-                        ReqInt(kv, "sym", lineNo),
-                        ReqInt(kv, "type", lineNo));
+                        ReqInt(kv, "seg",   lineNo),
+                        ReqInt(kv, "span",  lineNo),
+                        ReqInt(kv, "sym",   lineNo),
+                        ReqInt(kv, "type",  lineNo));
                     break;
 
                 case "file":
                     files.Add(new FileRec(
                         Id: ReqInt(kv, "id", lineNo),
                         Name: ReqStr(kv, "name", lineNo),
-                        Size: ReqLong(kv, "size", lineNo),
+                        Size: ReqLong(kv,  "size",  lineNo),
                         MTime: ReqLong(kv, "mtime", lineNo),
                         Mod: ReqInt(kv, "mod", lineNo)));
                     break;
@@ -134,7 +140,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Id: ReqInt(kv, "id", lineNo),
                         Name: ReqStr(kv, "name", lineNo),
                         Start: ReqLong(kv, "start", lineNo),
-                        Size: ReqLong(kv, "size", lineNo),
+                        Size: ReqLong(kv,  "size",  lineNo),
                         AddrSize: ReqEnum<AddrSize>(kv, "addrsize", lineNo),
                         Type: ReqEnum<SegPerm>(kv, "type", lineNo),
                         Bank: OptInt(kv, "bank", lineNo),
@@ -148,10 +154,10 @@ public sealed class Ld65Dbg : API.IDebugFile
 
                 case "span":
                     spans.Add(new SpanRec(
-                        Id: ReqInt(kv, "id", lineNo),
+                        Id: ReqInt(kv,  "id",  lineNo),
                         Seg: ReqInt(kv, "seg", lineNo),
                         Start: ReqLong(kv, "start", lineNo),
-                        Size: ReqLong(kv, "size", lineNo),
+                        Size: ReqLong(kv,  "size",  lineNo),
                         Type: OptInt(kv, "type", lineNo)));
                     break;
 
@@ -163,22 +169,22 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Size: OptLong(kv, "size", lineNo),
                         Type: OptEnum<ScopeType>(kv, "type", lineNo),
                         Parent: OptInt(kv, "parent", lineNo),
-                        Sym: OptInt(kv, "sym", lineNo),
+                        Sym: OptInt(kv,    "sym",    lineNo),
                         Spans: OptIntListPlus(kv, "span", lineNo)));
                     break;
 
                 case "line":
                     lines.Add(new LineRec(
-                        Id: ReqInt(kv, "id", lineNo),
+                        Id: ReqInt(kv,   "id",   lineNo),
                         File: ReqInt(kv, "file", lineNo),
                         Line: ReqLong(kv, "line", lineNo),
-                        Type: OptInt(kv, "type", lineNo),
+                        Type: OptInt(kv,  "type",  lineNo),
                         Count: OptInt(kv, "count", lineNo),
                         Spans: OptIntListPlus(kv, "span", lineNo))); // FIX
                     break;
 
                 case "sym":
-                    int? scope = OptInt(kv, "scope", lineNo);
+                    int? scope  = OptInt(kv, "scope",  lineNo);
                     int? parent = OptInt(kv, "parent", lineNo);
                     if ((scope is null) == (parent is null))
                         throw new FormatException($"Line {lineNo}: sym must have exactly one of scope= or parent=");
@@ -188,7 +194,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                         Name: ReqStr(kv, "name", lineNo),
                         AddrSize: ReqEnum<AddrSize>(kv, "addrsize", lineNo),
                         Type: ReqEnum<SymKind>(kv, "type", lineNo),
-                        Val: OptLong(kv, "val", lineNo),
+                        Val: OptLong(kv,  "val",  lineNo),
                         Size: OptLong(kv, "size", lineNo),
                         Seg: OptInt(kv, "seg", lineNo),
                         Scope: scope,
@@ -211,32 +217,32 @@ public sealed class Ld65Dbg : API.IDebugFile
         }
 
         Version = version ?? throw new FormatException("Missing version record");
-        Info = info ?? throw new FormatException("Missing info record");
+        Info    = info    ?? throw new FormatException("Missing info record");
 
-        Files = files.ToArray();
-        Mods = mods.ToArray();
-        Libs = libs.ToArray();
-        Segs = segs.ToArray();
-        Spans = spans.ToArray();
+        Files  = files.ToArray();
+        Mods   = mods.ToArray();
+        Libs   = libs.ToArray();
+        Segs   = segs.ToArray();
+        Spans  = spans.ToArray();
         Scopes = scopes.ToArray();
-        Lines = lines.ToArray();
-        Syms = syms.ToArray();
-        Types = types.ToArray();
+        Lines  = lines.ToArray();
+        Syms   = syms.ToArray();
+        Types  = types.ToArray();
     }
 
     // ---------- parsing helpers ----------
     private static Dictionary<string, string> ParseKv(string s, int lineNo)
     {
         var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        int i = 0;
+        int i  = 0;
         while (true)
         {
             while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
             if (i >= s.Length) break;
 
             int k0 = i;
-            while (i < s.Length && s[i] != '=' && s[i] != ',') i++;
-            if (i >= s.Length || s[i] != '=') throw new FormatException($"Line {lineNo}: expected key=value");
+            while (i < s.Length && s[i]  != '=' && s[i] != ',') i++;
+            if (i    >= s.Length || s[i] != '=') throw new FormatException($"Line {lineNo}: expected key=value");
             string key = s[k0..i].Trim().ToLowerInvariant();
             i++; // '='
 
@@ -245,7 +251,7 @@ public sealed class Ld65Dbg : API.IDebugFile
             if (i < s.Length && s[i] == '"')
             {
                 i++;
-                var sb = new System.Text.StringBuilder();
+                var sb = new global::System.Text.StringBuilder();
                 while (i < s.Length)
                 {
                     char c = s[i++];
@@ -266,7 +272,7 @@ public sealed class Ld65Dbg : API.IDebugFile
                 throw new FormatException($"Line {lineNo}: duplicate key '{key}'");
 
             while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
-            if (i >= s.Length) break;
+            if (i    >= s.Length) break;
             if (s[i] != ',') throw new FormatException($"Line {lineNo}: expected ','");
             i++;
         }
@@ -325,16 +331,16 @@ public sealed class Ld65Dbg : API.IDebugFile
     {
         if (!kv.TryGetValue(key, out var v)) return null;
         var parts = v.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var arr = new int[parts.Length];
+        var arr   = new int[parts.Length];
         for (int i = 0; i < parts.Length; i++)
             arr[i] = (int)ParseLong(parts[i], lineNo, key);
         return arr;
     }
 
-    public int GetSymbol() {
+    public int GetSymbol(string sym) {
         throw new NotImplementedException();
     }
-    public int GetAddressMapping() {
+    public IDictionary<string, int> GetSymbols(IReadOnlyList<string> syms) {
         throw new NotImplementedException();
     }
 }

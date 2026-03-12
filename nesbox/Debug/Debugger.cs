@@ -6,6 +6,10 @@ public static class Debugger {
         internal string fp;
         internal int    line;
     }
+
+    internal static void Initialize() {
+        session = new();
+    }
     
     internal static void BeginDebugging() {
         
@@ -63,5 +67,6 @@ public static class Debugger {
     private static          int                                   _currentLineNumber;
     private static          byte                                  _lastSp;
     
-    internal static bool debugging;
+    internal static bool            debugging;
+    internal static DapSession<int> session;
 }

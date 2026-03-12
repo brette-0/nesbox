@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.Contracts;
+using System.Numerics;
 
 namespace nesbox;
 
@@ -7,7 +8,7 @@ using EList;
 /// <summary>
 /// Contains all methods that may interface components designed by user with the emulator
 /// </summary>
-internal static class API {
+public static class API {
     
     /// <summary>
     /// Type of component that is signalled per PPU dot.
@@ -115,8 +116,53 @@ internal static class API {
 
     }
 
-    internal interface IDebugFile {
-        public int GetSymbol();
-        public int GetAddressMapping();
+    public static class Debugging {
+        internal interface IDebugAdaptorProtocol<TA> where TA : IBinaryInteger<TA> {
+            internal static Dictionary<TA, Breakpoint> Breakpoints { get; set; }
+            public          int                        GetSymbol(string                 sym);
+            public          IDictionary<string, int>   GetSymbols(IReadOnlyList<string> syms);
+            public          IDebugFile<TA>             debugFile { get; }
+        }
+
+        public interface IDebugFile<TA> where TA : IBinaryInteger<TA> {
+            /// <summary>
+            /// Lines are a file location with an index within the file, they may point to an address in memory
+            /// </summary>
+            IDictionary<TA, ILine>    Lines { get; }
+            /// <summary>
+            /// Symbols are characterized by alias and scope and may equate to a constant value which may be dereferenced
+            /// </summary>
+            IReadOnlyList<ISymbol> Symbols { get; }
+            
+            /// <summary>
+            /// Done by offset to span as offset implicit to length hunk with scope for proper symbol resolution
+            /// </summary>
+            IDictionary<int, ISpan>   Spans { get; }
+        }
+        
+        
+        // TODO: convert structs to interfaces, we don't want the adaptors to be unable to handle additional information
+
+        public interface ISpan {
+            public int Length { get; set; }
+            public int Scope  { get; set; }
+        }
+        
+        public interface ISymbol {
+            public string name  { get; set; }
+            public int    scope { get; set; }
+            public int    value { get; set; }
+            
+        }
+        
+        internal struct Breakpoint {
+            private int    address;
+            private string expression;
+        }
+        
+        public interface ILine {
+            public string fp   { get; set; }
+            public int    line { get; set; }
+        }
     }
 }
