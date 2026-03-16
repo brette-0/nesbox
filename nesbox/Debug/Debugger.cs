@@ -6,10 +6,6 @@ public static class Debugger {
         internal string fp;
         internal int    line;
     }
-
-    internal static void Initialize() {
-        session = new();
-    }
     
     internal static void BeginDebugging() {
         
