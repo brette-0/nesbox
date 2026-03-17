@@ -110,9 +110,8 @@ internal static class Program {
         }
         
         while (!System.Quit) {
-            // open lua terminal (used to change behavior during runtime to replace UI)
-            Semaphore.Wait();
-            // TODO: Setup Semaphore such that it does work (eventually)
+            var didWork = Debug.Debugger.PumpAsync().GetAwaiter().GetResult();
+            if (!didWork) Thread.Sleep(10);
         }
     }
 
@@ -120,8 +119,6 @@ internal static class Program {
         internal static Thread? Renderer;
         internal static Thread? System;
     }
-    
-    internal static readonly SemaphoreSlim Semaphore = new SemaphoreSlim(0);
 
     internal static API.ICartridge              Cartridge { get; private set; } = null!;
     internal static API.IIO?                    Controller1;

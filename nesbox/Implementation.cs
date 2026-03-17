@@ -25,31 +25,33 @@ internal static class Implementation {
         
         while (args.MoveNext()) {
             switch (args.Current) {
-                case "--debuggingPort":
+                case "--debugPort":
                     if (args.MoveNext()) {
                         if (!int.TryParse(args.Current, out port)) {
-                            Console.WriteLine("[CART] Debugging port is not integer");
+                            Console.WriteLine("[IMPL] Debug port is not integer");
                             System.Quit = true;
                         }
-                        if (System.Quit) break;
+                        if (System.Quit) return cartridge;
+                        break;
                     }
 
-                    Console.WriteLine("[CART] No argument supplied for Debugging Port");
+                    Console.WriteLine("[IMPL] No argument supplied for Debugging Port");
                     System.Quit = true;
                     break;
 
                 case "--debugFile":
                     if (args.MoveNext()) {
                         dbgFile = new Ld65Dbg<int>(args.Current);
-                        if (System.Quit) break;
+                        if (System.Quit) return cartridge;
+                        break;
                     }
                     
-                    Console.WriteLine("[CART] No argument supplied for Debug File");
+                    Console.WriteLine("[IMPL] No argument supplied for Debug File");
                     System.Quit = true;
                     break;
                 
                 default:
-                    Console.WriteLine($"[CART] Unexpected Argument {args.Current}");
+                    Console.WriteLine($"[IMPL] Unexpected Argument {args.Current}");
                     System.Quit = true;
                     break;
             }
@@ -57,19 +59,21 @@ internal static class Implementation {
 
         switch (dbgFile is null, port is 0) {
             case (true, false):
-                Console.WriteLine($"[CART] No debug file passed, cannot debug");
+                Console.WriteLine($"[IMPL] No debug file passed, cannot debug");
                 System.Quit = true;
                 break;
             
             case (false, true):
-                Console.WriteLine($"[CART] No debug port passed, cannot debug");
+                Console.WriteLine($"[IMPL] No debug port passed, cannot debug");
                 System.Quit = true;
                 break;
+            
+            case (false, false):
+                Debugger.BeginDebugging(dbgFile!);
+                break;
         }
-
+        
+        
         return cartridge;
     }
-
-
-
 }

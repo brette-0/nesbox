@@ -6,10 +6,12 @@ using System.Text.Json.Serialization;
 
 namespace nesbox.Debug;
 using SER = StringExpressionEvaluator.StringExpressionEvaluator;
+using IO  = global::System.IO;
 
 // ---------------------------------------------------------------------------
 // AOT-safe JSON source-generation context.
 // ---------------------------------------------------------------------------
+[JsonSerializable(typeof(AttachRequestArguments))]
 [JsonSerializable(typeof(DapMessage))]
 [JsonSerializable(typeof(DapResponse))]
 [JsonSerializable(typeof(DapEvent))]
@@ -49,19 +51,24 @@ internal sealed record DapMessage(
 );
 
 internal sealed record DapResponse(
-    [property: JsonPropertyName("seq")]         int     Seq,
-    [property: JsonPropertyName("type")]        string  Type,
-    [property: JsonPropertyName("request_seq")] int     RequestSeq,
-    [property: JsonPropertyName("success")]     bool    Success,
-    [property: JsonPropertyName("command")]     string  Command,
-    [property: JsonPropertyName("body")]        object? Body
+    [property: JsonPropertyName("seq")]         int          Seq,
+    [property: JsonPropertyName("type")]        string       Type,
+    [property: JsonPropertyName("request_seq")] int          RequestSeq,
+    [property: JsonPropertyName("success")]     bool         Success,
+    [property: JsonPropertyName("command")]     string       Command,
+    [property: JsonPropertyName("body")]        JsonElement? Body
 );
 
 internal sealed record DapEvent(
-    [property: JsonPropertyName("seq")]   int     Seq,
-    [property: JsonPropertyName("type")]  string  Type,
-    [property: JsonPropertyName("event")] string  EventName,
-    [property: JsonPropertyName("body")]  object? Body
+    [property: JsonPropertyName("seq")]   int          Seq,
+    [property: JsonPropertyName("type")]  string       Type,
+    [property: JsonPropertyName("event")] string       EventName,
+    [property: JsonPropertyName("body")]  JsonElement? Body
+);
+
+internal sealed record AttachRequestArguments(
+    [property: JsonPropertyName("host")] string? Host,
+    [property: JsonPropertyName("port")] int?    Port
 );
 
 internal sealed record DapBreakpointSource(
@@ -87,7 +94,9 @@ internal sealed record CapabilitiesBody(
 internal sealed record InitializedEventBody;
 
 internal sealed record StoppedEventBody(
-    [property: JsonPropertyName("reason")] string Reason
+    [property: JsonPropertyName("reason")]            string Reason,
+    [property: JsonPropertyName("threadId")]          int    ThreadId,
+    [property: JsonPropertyName("allThreadsStopped")] bool   AllThreadsStopped
 );
 
 internal sealed record DapBreakpoint(
@@ -143,9 +152,11 @@ internal sealed record VariablesResponseBody(
 // Debugger — step engine + async TCP DAP server, no dedicated thread.
 //
 // PumpAsync() is called by the main thread (Program.cs) in its idle loop
-// alongside the future Lua/CLI services. The emu thread (System.cs) is
-// unaware of DAP — it simply sleeps via Thread.Sleep(1000) while
-// Debugger.debugging is true, which is set/cleared by DAP commands.
+// alongside the future Lua/CLI services. Returns true if a message was
+// processed, false if idle — the caller sleeps only when nothing was done,
+// avoiding timer allocations when messages are actively flowing.
+// The emu thread (System.cs) is unaware of DAP — it waits on ResumeEvent
+// while Debugger.debugging is true, which is set/cleared by DAP commands.
 // ---------------------------------------------------------------------------
 public static class Debugger {
 
@@ -157,21 +168,47 @@ public static class Debugger {
     // -----------------------------------------------------------------------
     // Called once at startup to begin listening. No thread is created.
     // -----------------------------------------------------------------------
-    internal static void BeginDebugging() {
+    internal static void BeginDebugging(API.Debugging.IDebugFile<int> debugFile) {
+        _debugFile = debugFile;
+
+        foreach (var kv in debugFile.Lines)
+            SourceCodeReferences.TryAdd(kv.Key, new SourceAddress { fp = kv.Value.fp, line = kv.Value.line });
+
+        Console.WriteLine($"[DAP] Mapped {SourceCodeReferences.Count} source lines");
+
         _listener   = new TcpListener(IPAddress.Loopback, DapPort);
         _listener.Start();
         _acceptTask = _listener.AcceptTcpClientAsync();
         Console.WriteLine($"[DAP] Listening on 127.0.0.1:{DapPort}");
+        Console.WriteLine($"[DAP] Waiting for IDE...");
+
+        // Block until configurationDone — ensures the handshake completes
+        // before the emu thread starts.
+        while (!_readyEvent.IsSet) {
+            if (!PumpAsync().GetAwaiter().GetResult())
+                global::System.Threading.Thread.Sleep(10);
+        }
+
+        // Grace period: keep pumping briefly after configurationDone so any
+        // setBreakpoints the IDE sends immediately after are processed before
+        // the emu thread starts executing.
+        var grace = global::System.Diagnostics.Stopwatch.StartNew();
+        while (grace.ElapsedMilliseconds < 200) {
+            if (!PumpAsync().GetAwaiter().GetResult())
+                global::System.Threading.Thread.Sleep(10);
+        }
+
+        Console.WriteLine($"[DAP] IDE ready");
     }
 
     // -----------------------------------------------------------------------
     // Called by the main thread each iteration of its idle loop (Program.cs).
-    // Handles exactly one pending action per call:
-    //   • an incoming connection, or
-    //   • one DAP message from a connected client, or
-    //   • a short yield if nothing is ready yet.
+    // Returns true if a DAP message was processed, false if nothing was ready.
+    // The caller sleeps via Thread.Sleep only on false — no timer allocations
+    // occur when messages are flowing, no spin occurs when idle.
     // -----------------------------------------------------------------------
-    internal static async Task PumpAsync() {
+    internal static async Task<bool> PumpAsync() {
+        if (_acceptTask is null) return false;
         if (_acceptTask is { IsCompleted: true }) {
             try {
                 var client  = await _acceptTask;
@@ -184,26 +221,20 @@ public static class Debugger {
             _acceptTask = _listener!.AcceptTcpClientAsync();
         }
 
-        if (_stream is null) {
-            await Task.Delay(10);
-            return;
-        }
+        if (_stream is null || !_stream.DataAvailable) return false;
 
         try {
-            if (!_stream.DataAvailable) {
-                await Task.Delay(10);
-                return;
-            }
-
             var msg = await ReadMessageAsync(_stream);
-            if (msg is null) { Disconnect(); return; }
-
+            if (msg is null) { Disconnect(); return false; }
             await DispatchAsync(msg);
+            return true;
         } catch (Exception ex) when (ex is IOException or SocketException) {
             Console.WriteLine("[DAP] Client disconnected");
             Disconnect();
+            return false;
         } catch (Exception ex) {
             Console.WriteLine($"[DAP] Error: {ex.Message}");
+            return false;
         }
     }
 
@@ -239,28 +270,34 @@ public static class Debugger {
     private static bool Step(bool notifyStep) {
         if (System.cycle is 0) {
             _lastLineNumber    = _currentLineNumber;
-            _currentLineNumber = SourceCodeReferences[Program.Cartridge.GetROMLocation(System.PC)].line;
+            _currentRomAddress = Program.Cartridge.GetROMLocation(System.PC);
+            _currentLineNumber = SourceCodeReferences[_currentRomAddress].line;
         }
 
         System.Step();
         ++System.virtualTime;   // bump virtual time (emu thread sleeping while debugging)
 
-        if (BreakPoints.Find(t => t!.Value.pos == _currentLineNumber) is { } breakpoint) {
-            if (breakpoint.expr is null) {
-                Console.WriteLine($"[IDE] Breakpoint hit at ${System.PC:X4} line {_currentLineNumber}");
-                NotifyStopped("breakpoint");
-                return true;
+        bool breakpointHit;
+        lock (_breakPointLock) {
+            var bp = BreakPoints.Find(t => t!.Value.pos == _currentLineNumber);
+            if (bp is not null && bp.Value.expr is not null)
+                RefreshSymbols(_currentRomAddress);
+            if (bp is not null) {
+                if (bp.Value.expr is null) {
+                    breakpointHit = true;
+                } else {
+                    var expr = bp.Value.expr;
+                    breakpointHit = !SER.TryEvaluate(ref expr, out var result, Symbols) || result is not 0;
+                }
+            } else {
+                breakpointHit = false;
             }
-            if (!SER.TryEvaluate(ref breakpoint.expr, out var result, Symbols)) {
-                Console.WriteLine($"[IDE] Breakpoint hit at ${System.PC:X4} line {_currentLineNumber}");
-                NotifyStopped("breakpoint");
-                return true;
-            }
-            if (result is not 0) {
-                Console.WriteLine($"[IDE] Breakpoint hit at ${System.PC:X4} line {_currentLineNumber}");
-                NotifyStopped("breakpoint");
-                return true;
-            }
+        }
+
+        if (breakpointHit) {
+            Console.WriteLine($"[IDE] Breakpoint hit at ${System.PC:X4} line {_currentLineNumber}");
+            NotifyStopped("breakpoint");
+            return true;
         }
 
         if (notifyStep) NotifyStopped("step");
@@ -308,32 +345,53 @@ public static class Debugger {
 
     private static async Task DispatchAsync(DapMessage msg) {
         switch (msg.Command) {
+            case "attach": {
+                var args = msg.Body?.Deserialize(DapJsonContext.Default.AttachRequestArguments);
+                Console.WriteLine($"[IDE] Attach from {args?.Host ?? "unknown"}:{args?.Port?.ToString() ?? "?"}");
+                await WriteRawResponseAsync(msg, null);
+                break;
+            }
+
+            case "launch":
+                Console.WriteLine("[IDE] Launch (treated as attach)");
+                await WriteRawResponseAsync(msg, null);
+                break;
+
             case "initialize":
                 Console.WriteLine("[IDE] Handshake: initialize");
-                await SendResponseAsync(msg, new CapabilitiesBody(
-                    SupportsConditionalBreakpoints:        true,
-                    SupportsConfigurationDoneRequest:      true,
-                    SupportsSingleThreadExecutionRequests: true
-                ));
-                await SendEventAsync("initialized", new InitializedEventBody());
+                await WriteRawResponseAsync(msg,
+                    JsonSerializer.SerializeToElement(
+                        new CapabilitiesBody(true, true, true),
+                        DapJsonContext.Default.CapabilitiesBody));
+                await WriteEventAsync("initialized",
+                    JsonSerializer.SerializeToElement(
+                        new InitializedEventBody(),
+                        DapJsonContext.Default.InitializedEventBody));
                 Console.WriteLine("[IDE] Handshake: initialized event sent");
                 break;
 
             case "configurationDone":
-                Console.WriteLine("[IDE] Handshake complete, execution paused at entry");
-                debugging = true;
-                await SendResponseAsync(msg, null);
-                NotifyStopped("entry");
+                Console.WriteLine("[IDE] Handshake complete");
+                debugging = false;
+                _readyEvent.Set();
+                await WriteRawResponseAsync(msg, null);
                 break;
 
             case "setBreakpoints": {
-                if (msg.Body is not { } bodyEl) { await SendResponseAsync(msg, null); break; }
+                if (msg.Body is not { } bodyEl) { await WriteRawResponseAsync(msg, null); break; }
                 var args = bodyEl.Deserialize(DapJsonContext.Default.SetBreakpointsRequestArguments);
-                if (args is null)               { await SendResponseAsync(msg, null); break; }
+                if (args is null)               { await WriteRawResponseAsync(msg, null); break; }
 
                 var srcPath = args.Source.Path ?? args.Source.Name ?? string.Empty;
-                BreakPoints.RemoveAll(bp => bp is not null
-                    && ResolveSourceForLine(bp.Value.pos) == srcPath);
+                Console.WriteLine($"[IDE] setBreakpoints received: src={srcPath} count={args.Breakpoints?.Count ?? 0}");
+                Console.WriteLine($"[DAP] ide path resolved : {IO.Path.GetFullPath(srcPath)}");
+                if (_debugFile?.Lines.Count > 0)
+                    Console.WriteLine($"[DAP] dbg path sample  : {IO.Path.GetFullPath(_debugFile.Lines.First().Value.fp)}");
+
+                lock (_breakPointLock) {
+                    BreakPoints.RemoveAll(bp => bp is not null
+                        && ResolveSourceForLine(bp.Value.pos) == srcPath);
+                }
 
                 var results = new List<DapBreakpoint>();
                 foreach (var src in args.Breakpoints ?? []) {
@@ -341,36 +399,39 @@ public static class Debugger {
                     int  resolvedLine = src.Line;
 
                     if (_debugFile is not null) {
-                        var fileRec = _debugFile.Files.FirstOrDefault(f =>
-                            string.Equals(Path.GetFullPath(f.Name),
-                                          Path.GetFullPath(srcPath),
-                                          StringComparison.OrdinalIgnoreCase));
-
-                        var lineRec = _debugFile.Lines.FirstOrDefault(
-                            l => l.File == fileRec.Id && l.Line == src.Line);
-
-                        verified     = lineRec.Id >= 0;
-                        resolvedLine = (int)lineRec.Line;
+                        var match = _debugFile.Lines.FirstOrDefault(kv =>
+                            string.Equals(IO.Path.GetFullPath(kv.Value.fp),
+                                          IO.Path.GetFullPath(srcPath),
+                                          StringComparison.OrdinalIgnoreCase)
+                            && kv.Value.line == src.Line);
+                        verified     = match.Value is not null;
+                        resolvedLine = verified ? match.Value!.line : src.Line;
                     }
 
                     if (verified || _debugFile is null) {
-                        BreakPoints.Add((resolvedLine, src.Condition));
+                        lock (_breakPointLock) { BreakPoints.Add((resolvedLine, src.Condition)); }
                         results.Add(new DapBreakpoint(Verified: true,  Line: resolvedLine, Message: null));
                         var cond = src.Condition is not null ? $" condition={src.Condition}" : string.Empty;
-                        Console.WriteLine($"[IDE] Breakpoint set: {Path.GetFileName(srcPath)}:{resolvedLine}{cond}");
+                        Console.WriteLine($"[IDE] Breakpoint set: {IO.Path.GetFileName(srcPath)}:{resolvedLine}{cond}");
                     } else {
                         results.Add(new DapBreakpoint(Verified: false, Line: src.Line, Message: "No code at this line"));
-                        Console.WriteLine($"[IDE] Breakpoint rejected: {Path.GetFileName(srcPath)}:{src.Line} (no code at line)");
+                        Console.WriteLine($"[IDE] Breakpoint rejected: {IO.Path.GetFileName(srcPath)}:{src.Line} (no code at line)");
                     }
                 }
 
-                await SendResponseAsync(msg, new SetBreakpointsResponseBody(results));
+                await WriteRawResponseAsync(msg,
+                    JsonSerializer.SerializeToElement(
+                        new SetBreakpointsResponseBody(results),
+                        DapJsonContext.Default.SetBreakpointsResponseBody));
                 break;
             }
 
+            case "setExceptionBreakpoints":
+                Console.WriteLine("[IDE] setExceptionBreakpoints (no-op)");
+                await WriteRawResponseAsync(msg, null);
+                break;
+
             case "threads":
-                // DAP requires a threads response to complete the handshake.
-                // The 6502 has no thread model — one CPU, one execution context.
                 await WriteFrameAsync(JsonSerializer.Serialize(
                     new DapResponse(NextSeq(), "response", msg.Seq, true, "threads",
                         JsonDocument.Parse("""{"threads":[{"id":1,"name":"6502"}]}""").RootElement),
@@ -379,62 +440,63 @@ public static class Debugger {
 
             case "stackTrace": {
                 var sa    = SourceCodeReferences[Program.Cartridge.GetROMLocation(System.PC)];
-                var frame = new DapStackFrame(
-                    Id:     1,
-                    Name:   $"${System.PC:X4}",
-                    Source: new DapSource(Path.GetFileName(sa.fp), sa.fp),
-                    Line:   sa.line,
-                    Column: 1
-                );
-                await SendResponseAsync(msg, new StackTraceResponseBody([frame], TotalFrames: 1));
+                var frame = new DapStackFrame(1, $"${System.PC:X4}",
+                    new DapSource(IO.Path.GetFileName(sa.fp), sa.fp), sa.line, 1);
+                await WriteRawResponseAsync(msg,
+                    JsonSerializer.SerializeToElement(
+                        new StackTraceResponseBody([frame], TotalFrames: 1),
+                        DapJsonContext.Default.StackTraceResponseBody));
                 break;
             }
 
             case "scopes":
-                await SendResponseAsync(msg, new ScopesResponseBody([
-                    new DapScope("CPU Registers", VariablesReference: 1, Expensive: false)
-                ]));
+                await WriteRawResponseAsync(msg,
+                    JsonSerializer.SerializeToElement(
+                        new ScopesResponseBody([new DapScope("CPU Registers", 1, false)]),
+                        DapJsonContext.Default.ScopesResponseBody));
                 break;
 
             case "variables": {
                 var args = msg.Body?.Deserialize(DapJsonContext.Default.VariablesRequestArguments);
                 var vars = args?.VariablesReference is 1 ? BuildRegisterVariables() : [];
-                await SendResponseAsync(msg, new VariablesResponseBody(vars));
+                await WriteRawResponseAsync(msg,
+                    JsonSerializer.SerializeToElement(
+                        new VariablesResponseBody(vars),
+                        DapJsonContext.Default.VariablesResponseBody));
                 break;
             }
 
             case "next":
                 Console.WriteLine($"[IDE] Step over at ${System.PC:X4}");
-                await SendResponseAsync(msg, null);
+                await WriteRawResponseAsync(msg, null);
                 StepOver();
                 break;
 
             case "stepIn":
                 Console.WriteLine($"[IDE] Step into at ${System.PC:X4}");
-                await SendResponseAsync(msg, null);
+                await WriteRawResponseAsync(msg, null);
                 StepOnce();
                 break;
 
             case "continue":
                 Console.WriteLine("[IDE] Continue");
                 debugging = false;
-                await SendResponseAsync(msg, null);
-                await SendEventAsync("continued", null);
+                ResumeEvent.Set();
+                await WriteRawResponseAsync(msg, null);
+                await WriteEventAsync("continued", null);
                 break;
 
             case "pause":
                 Console.WriteLine($"[IDE] Pause requested at ${System.PC:X4}");
                 debugging = true;
-                await SendResponseAsync(msg, null);
+                await WriteRawResponseAsync(msg, null);
                 NotifyStopped("pause");
                 break;
 
             case "writeMemory": {
                 var addr = msg.Body?.TryGetProperty("memoryReference", out var mr) is true ? mr.GetString() : "?";
                 Console.WriteLine($"[IDE] Memory write requested at {addr} (not implemented)");
-                await WriteFrameAsync(JsonSerializer.Serialize(
-                    new DapResponse(NextSeq(), "response", msg.Seq, false, "writeMemory", null),
-                    DapJsonContext.Default.DapResponse));
+                await WriteRawResponseAsync(msg, null, success: false);
                 break;
             }
 
@@ -442,16 +504,14 @@ public static class Debugger {
             case "terminate":
                 Console.WriteLine("[IDE] Disconnected");
                 debugging = false;
-                await SendResponseAsync(msg, null);
+                ResumeEvent.Set();
+                await WriteRawResponseAsync(msg, null);
                 Disconnect();
                 break;
 
             default:
                 Console.WriteLine($"[IDE] Unhandled command: {msg.Command}");
-                await WriteFrameAsync(JsonSerializer.Serialize(
-                    new DapResponse(NextSeq(), "response", msg.Seq, false,
-                                    msg.Command ?? string.Empty, null),
-                    DapJsonContext.Default.DapResponse));
+                await WriteRawResponseAsync(msg, null, success: false);
                 break;
         }
     }
@@ -460,23 +520,30 @@ public static class Debugger {
     // Send helpers — all writes go through WriteFrameAsync
     // -----------------------------------------------------------------------
 
-    private static Task SendResponseAsync(DapMessage req, object? body) =>
+    // -----------------------------------------------------------------------
+    // Send helpers — all writes go through WriteFrameAsync.
+    // Bodies are passed as JsonElement? — callers must serialize with the
+    // specific typed serializer from DapJsonContext before passing here.
+    // This avoids AOT-unsafe polymorphic object serialization entirely.
+    // -----------------------------------------------------------------------
+
+    private static Task WriteRawResponseAsync(DapMessage req, JsonElement? body, bool success = true) =>
         WriteFrameAsync(JsonSerializer.Serialize(
-            new DapResponse(NextSeq(), "response", req.Seq, true,
+            new DapResponse(NextSeq(), "response", req.Seq, success,
                 req.Command ?? string.Empty, body),
             DapJsonContext.Default.DapResponse));
 
-    private static Task SendEventAsync(string eventName, object? body) =>
+    private static Task WriteEventAsync(string eventName, JsonElement? body) =>
         WriteFrameAsync(JsonSerializer.Serialize(
             new DapEvent(NextSeq(), "event", eventName, body),
             DapJsonContext.Default.DapEvent));
 
-    // NotifyStopped is called from the synchronous step engine, which is itself
-    // called from DispatchAsync on the main thread — so GetAwaiter().GetResult()
-    // is safe here, there is no async context above us to deadlock against.
     private static void NotifyStopped(string reason) =>
-        SendEventAsync("stopped", new StoppedEventBody(reason))
-            .GetAwaiter().GetResult();
+        WriteEventAsync("stopped",
+            JsonSerializer.SerializeToElement(
+                new StoppedEventBody(reason, ThreadId: 1, AllThreadsStopped: true),
+                DapJsonContext.Default.StoppedEventBody))
+        .GetAwaiter().GetResult();
 
     private static async Task WriteFrameAsync(string json) {
         if (_stream is null) return;
@@ -529,6 +596,33 @@ public static class Debugger {
     // Helpers
     // -----------------------------------------------------------------------
 
+    // Resolves the symbol table visible at a given ROM address by binary
+    // searching IDebugFile.Spans (sorted ascending by Start) for the
+    // containing span, then reading its scope's symbol list.
+    // Called before evaluating any conditional breakpoint expression.
+    private static void RefreshSymbols(int romAddress) {
+        Symbols.Clear();
+        if (_debugFile is null) return;
+
+        var spans = _debugFile.Spans;
+        if (spans.Count is 0) return;
+
+        // Binary search for the last span whose Start <= romAddress
+        int lo = 0, hi = spans.Count - 1, found = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (spans[mid].Start <= romAddress) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+
+        if (found < 0) return;
+        var span = spans[found];
+        if (romAddress >= span.Start + span.Length) return; // not actually inside this span
+
+        foreach (var sym in span.Scope.symbols)
+            Symbols[sym.name] = new SER.SerUnion<int>(sym.value);
+    }
+
     private static string ResolveSourceForLine(int line) {
         foreach (var kv in SourceCodeReferences)
             if (kv.Value.line == line) return kv.Value.fp;
@@ -546,9 +640,11 @@ public static class Debugger {
 
     private static          Dictionary<string, SER.SerUnion<int>> Symbols              = [];
     private static          List<(int pos, string? expr)?>        BreakPoints          = [];
+    private static readonly object                                 _breakPointLock      = new();
     private static readonly Dictionary<int, SourceAddress>        SourceCodeReferences = [];
     private static          int                                    _lastLineNumber;
     private static          int                                    _currentLineNumber;
+    private static          int                                    _currentRomAddress;
     private static          byte                                   _lastSp;
 
     private static TcpListener?     _listener;
@@ -556,7 +652,38 @@ public static class Debugger {
     private static NetworkStream?   _stream;
     private static int              _seq;
 
-    internal static Ld65Dbg<int>? _debugFile;
+    internal static API.Debugging.IDebugFile<int>? _debugFile;
     internal static bool          debugging;
     private  const  int           DapPort = 4711;
+
+    // Signalled by the main thread when debugging is set to false,
+    // so the emu thread wakes immediately rather than waiting up to 1s.
+    internal static readonly ManualResetEventSlim ResumeEvent = new(false);
+    private  static readonly ManualResetEventSlim _readyEvent = new(false);
+
+    // -----------------------------------------------------------------------
+    // Called from the emu thread at instruction fetch (cycle 0) during normal
+    // emulation. Returns true if the address maps to an active breakpoint,
+    // in which case the caller sets debugging = true.
+    // Lock-guarded because BreakPoints may be written by the main thread
+    // (setBreakpoints) concurrently — a structural race on List<T> would
+    // corrupt the list, not just return a stale result.
+    // Uses TryGetValue because during live emulation the CPU can legitimately
+    // be at an address with no debug info (interrupt vectors, RAM, mapper regs).
+    // -----------------------------------------------------------------------
+    internal static bool CheckBreakpoint(ushort cpuAddress) {
+        var romLocation = Program.Cartridge.GetROMLocation(cpuAddress);
+        if (!SourceCodeReferences.TryGetValue(romLocation, out var sa)) return false;
+        if (BreakPoints.Count > 0)
+            Console.WriteLine($"[DAP] Mapped fetch cpu=${cpuAddress:X4} rom=${romLocation:X4} line={sa.line} file={IO.Path.GetFileName(sa.fp)}");
+        lock (_breakPointLock) {
+            var bp = BreakPoints.Find(t => t!.Value.pos == sa.line);
+            if (bp is null) return false;
+            if (bp.Value.expr is null) return true;     // unconditional
+            var expr = bp.Value.expr;
+            RefreshSymbols(romLocation);
+            if (!SER.TryEvaluate(ref expr, out var result, Symbols)) return true;
+            return result is not 0;
+        }
+    }
 }

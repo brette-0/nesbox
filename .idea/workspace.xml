@@ -5,14 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="292ce93b-9fd7-4d1e-9263-ef1aaa584a63" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/docs/Debugging.rst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/doctrees/environment.pickle" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/doctrees/environment.pickle" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/doctrees/index.doctree" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/doctrees/index.doctree" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/html/_sources/index.rst.txt" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/html/_sources/index.rst.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/html/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/html/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/html/objects.inv" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/html/objects.inv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/_build/html/searchindex.js" beforeDir="false" afterPath="$PROJECT_DIR$/docs/_build/html/searchindex.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/API.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/API.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/Debug/DapSession.cs" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/nesbox/Debug/Debugger.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/Debug/Debugger.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/Debug/ca65DebugFile.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/Debug/ca65DebugFile.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/Implementation.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/Implementation.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/Program.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/Program.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/nesbox/System.cs" beforeDir="false" afterPath="$PROJECT_DIR$/nesbox/System.cs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -67,7 +67,7 @@
       <workItem from="1773336035912" duration="160000" />
       <workItem from="1773336343377" duration="386000" />
       <workItem from="1773336884119" duration="510000" />
-      <workItem from="1773337406013" duration="6833000" />
+      <workItem from="1773337406013" duration="8086000" />
     </task>
     <servers />
   </component>

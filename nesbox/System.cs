@@ -556,7 +556,6 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal void W4003_PulseX() {
-                Console.WriteLine(Data);
                 var lengthIndex = (Data >> 3) & 0x1F;
                 Length = enabled ? LengthTable[lengthIndex] : (byte)0;
 
@@ -936,7 +935,8 @@ internal static class System {
         DoNotProgress:
         while (!Quit) {
             if (Debug.Debugger.debugging) {
-                Thread.Sleep(1000);
+                Debug.Debugger.ResumeEvent.Wait(1000);
+                Debug.Debugger.ResumeEvent.Reset();
                 goto DoNotProgress;
             } else {
                 PPU.Step();
@@ -1049,6 +1049,15 @@ internal static class System {
             PC++;
             Register.IR = Data;
             OpHandle    = OpCodes.GetOpcodeSolver(Register.IR);
+
+            // Check for breakpoints on the instruction we just fetched.
+            // PC has already been incremented so the instruction address is PC-1.
+            // This is the only moment the address is stable and mappable to a source line.
+            if (Debug.Debugger.CheckBreakpoint((ushort)(PC - 1))) {
+                Debug.Debugger.debugging = true;
+                Debug.Debugger.ResumeEvent.Set();
+            }
+
             cycle++;
             return;
         }
@@ -1057,7 +1066,7 @@ internal static class System {
             OpHandle();
             #if DEBUG
             if (cycle is 0xff && OpHandle != Interrupt && OpHandle != StepReset) {
-                Console.WriteLine($"{PC:x4}: {OpCodes.Mnemonics[Register.IR]} {Address:x4} {Data:x2}");
+                //Console.WriteLine($"{PC:x4}: {OpCodes.Mnemonics[Register.IR]} {Address:x4} {Data:x2}");
             }
             #endif
             cycle++;
