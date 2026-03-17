@@ -3,7 +3,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using IO = System.IO;
 
 namespace nesbox.Debug;
 using SER = StringExpressionEvaluator.StringExpressionEvaluator;
