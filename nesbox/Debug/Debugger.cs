@@ -170,7 +170,7 @@ public static class Debugger {
         var pending = _pendingStop;
         if (pending is not null) {
             _pendingStop = null;
-            Console.WriteLine($"[IDE] {pending} — notifying IDE");
+            if (pending == "breakpoint") Console.WriteLine($"[BP] Hit at ${System.PC:X4}");
             await WriteStoppedEventAsync(pending);
             return true;
         }
@@ -282,7 +282,6 @@ public static class Debugger {
         while (read < contentLen)
             read += await stream.ReadAsync(bodyBytes.AsMemory(read, contentLen - read));
 
-        Console.WriteLine($"[DAP RX] {Encoding.UTF8.GetString(bodyBytes)}");
         return JsonSerializer.Deserialize(bodyBytes, DapJsonContext.Default.DapMessage);
     }
 
@@ -294,12 +293,10 @@ public static class Debugger {
         switch (msg.Command) {
             case "attach":
             case "launch":
-                Console.WriteLine($"[IDE] {msg.Command}");
                 await WriteRawResponseAsync(msg, null);
                 break;
 
             case "initialize":
-                Console.WriteLine("[IDE] Handshake: initialize");
                 await WriteRawResponseAsync(msg, BuildJson(w => {
                     w.WriteBoolean("supportsConditionalBreakpoints",        true);
                     w.WriteBoolean("supportsConfigurationDoneRequest",      true);
@@ -309,11 +306,10 @@ public static class Debugger {
                     w.WriteBoolean("supportsWriteMemoryRequest",            true);
                 }));
                 await WriteEventAsync("initialized", null);
-                Console.WriteLine("[IDE] initialized event sent");
                 break;
 
             case "configurationDone":
-                Console.WriteLine("[IDE] Handshake complete");
+                Console.WriteLine("[DAP] IDE ready — starting emulation");
                 _readyEvent.Set();
                 await WriteRawResponseAsync(msg, null);
                 break;
@@ -328,7 +324,6 @@ public static class Debugger {
                     : string.Empty;
 
                 var srcFile = IO.Path.GetFileName(srcPath);
-                Console.WriteLine($"[IDE] setBreakpoints: file={srcFile}");
 
                 _idePaths[srcFile] = srcPath;
 
@@ -371,11 +366,11 @@ public static class Debugger {
                         if (verified || _debugFile is null) {
                             lock (_breakPointLock) { BreakPoints.Add((resolved, condition)); }
                             bpResults.Add((conditionError is null, resolved, conditionError));
-                            Console.WriteLine($"[IDE] Breakpoint set: {srcFile}:{resolved}" +
-                                              (condition is null ? "" : $"  cond='{condition}'"));
+                            Console.WriteLine($"[BP] {srcFile}:{resolved}" +
+                                              (condition is null ? "" : $" if ({condition})"));
                         } else {
                             bpResults.Add((false, line, "No code at this line"));
-                            Console.WriteLine($"[IDE] Breakpoint rejected: {srcFile}:{line}");
+                            Console.WriteLine($"[BP] {srcFile}:{line} — no code at this line");
                         }
                     }
                 }
@@ -462,19 +457,16 @@ public static class Debugger {
             }
 
             case "next":
-                Console.WriteLine($"[IDE] Step over at ${System.PC:X4}");
                 await WriteRawResponseAsync(msg, null);
                 await StepOverAsync();
                 break;
 
             case "stepIn":
-                Console.WriteLine($"[IDE] Step into at ${System.PC:X4}");
                 await WriteRawResponseAsync(msg, null);
                 await StepOnceAsync();
                 break;
 
             case "continue":
-                Console.WriteLine("[IDE] Continue");
                 debugging = false;
                 ResumeEvent.Set();
                 await WriteRawResponseAsync(msg, BuildJson(w => {
@@ -487,7 +479,6 @@ public static class Debugger {
                 break;
 
             case "pause":
-                Console.WriteLine($"[IDE] Pause at ${System.PC:X4}");
                 debugging = true;
                 await WriteRawResponseAsync(msg, null);
                 await WriteStoppedEventAsync("pause");
@@ -586,7 +577,7 @@ public static class Debugger {
                     }
                 }
 
-                Console.WriteLine($"[DBG] writeMemory: ${wmStart:X4} ×{wmWritten} bytes");
+                Console.WriteLine($"[MEM] Write ${wmStart:X4} ×{wmWritten} bytes");
                 await WriteRawResponseAsync(msg, BuildJson(w => {
                     w.WriteNumber("offset",       0);
                     w.WriteNumber("bytesWritten", wmWritten);
@@ -596,7 +587,6 @@ public static class Debugger {
 
             case "disconnect":
             case "terminate":
-                Console.WriteLine("[IDE] Disconnected");
                 debugging = false;
                 ResumeEvent.Set();
                 await WriteRawResponseAsync(msg, null);
@@ -604,7 +594,7 @@ public static class Debugger {
                 break;
 
             default:
-                Console.WriteLine($"[IDE] Unhandled: {msg.Command}");
+                Console.WriteLine($"[DAP] Unhandled command: {msg.Command}");
                 await WriteRawResponseAsync(msg, null, success: false);
                 break;
         }
@@ -664,7 +654,6 @@ public static class Debugger {
 
     private static async Task WriteFrameAsync(string json) {
         if (_stream is null) return;
-        Console.WriteLine($"[DAP TX] {json}");
         var body   = Encoding.UTF8.GetBytes(json);
         var header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
         await _stream.WriteAsync(header.AsMemory());
@@ -759,7 +748,6 @@ public static class Debugger {
             int addr = addrVal.Value & 0xFFFF;
             if (addr < 0x2000) {
                 System.Memory.SystemRAM[addr & 0x7FF] = (byte)(val & 0xFF);
-                Console.WriteLine($"[DBG] REPL write cpu[${addr:X4}] = ${val & 0xFF:X2}");
                 return $"cpu[${addr:X4}] = ${val & 0xFF:X2}";
             }
             return $"Cannot write to ${addr:X4} — only System RAM ($0000–$1FFF) is writable";
@@ -791,7 +779,6 @@ public static class Debugger {
                 return $"Unknown register or target '{name}'. " +
                        $"Registers: A X Y S PC  Flags: N V B D I Z C  Memory: cpu[$addr]";
         }
-        Console.WriteLine($"[DBG] REPL write {name.ToUpperInvariant()} = ${value & 0xFF:X2}");
         return $"{name.ToUpperInvariant()} = ${value & 0xFF:X2}";
     }
 
