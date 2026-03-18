@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.Contracts;
+using System.Diagnostics.Contracts;
 using System.Numerics;
 
 namespace nesbox;
@@ -121,15 +121,77 @@ public static class API {
             /// <summary>
             /// Lines are a file location with an index within the file, they may point to an address in memory
             /// </summary>
-            IDictionary<TA, ILine>    Lines { get; }
-            
+            IDictionary<TA, ILine> Lines { get; }
+
             /// <summary>
             /// Done by offset to span as offset implicit to length hunk with scope for proper symbol resolution
             /// </summary>
-            IReadOnlyList<ISpan>   Spans { get; }
+            IReadOnlyList<ISpan> Spans { get; }
+
+            /// <summary>
+            /// Evaluates a conditional breakpoint expression in the context of a debug address.
+            /// The expression is parsed according to this debug file's assembler culture
+            /// (ca65: '$xx' hex, '::' scope separator, 'cpu[i]'/'program[i]'/'character[i]' for memory).
+            /// </summary>
+            /// <param name="expression">Raw expression string from the IDE breakpoint condition.</param>
+            /// <param name="romAddress">
+            ///   ROM address where the breakpoint fired; drives lexical scope resolution so that
+            ///   unqualified symbol names resolve outward from the innermost enclosing scope.
+            /// </param>
+            /// <param name="cpuRead">
+            ///   Side-effect-free peek into CPU address space (RAM + cartridge).
+            ///   Must NOT trigger PPU/APU hardware; for hardware register addresses, returning
+            ///   the high byte of the address is acceptable.
+            /// </param>
+            /// <param name="programRead">
+            ///   Side-effect-free read from the cartridge PRG-ROM byte array.
+            ///   Index is into the raw ProgramROM array; caller handles bounds safety.
+            /// </param>
+            /// <param name="characterRead">
+            ///   Side-effect-free read from the cartridge CHR-ROM byte array.
+            ///   Index is into the raw CharacterROM array; caller handles bounds safety.
+            /// </param>
+            /// <param name="regRead">
+            ///   Returns the current value of a named CPU register or flag, or null if unrecognised.
+            ///   Names are architecture-specific (e.g. "A", "X", "Y", "S", "PC", "N", "Z", "C", ...).
+            /// </param>
+            /// <returns>
+            ///   true  — breakpoint should fire (expression is non-zero, or evaluation errored).<br/>
+            ///   false — breakpoint should be skipped (expression evaluated to zero).
+            /// </returns>
+            bool EvaluateCondition(string     expression,
+                                   TA         romAddress,
+                                   Func<ushort, byte> cpuRead,
+                                   Func<int,   byte>  programRead,
+                                   Func<int,   byte>  characterRead,
+                                   Func<string, int?> regRead);
+
+            /// <summary>
+            /// Evaluates an expression and returns its raw integer value, or null if evaluation
+            /// fails. Uses the same assembler-culture-aware pre-processor as EvaluateCondition
+            /// so register names, symbols, $hex literals and cpu[]/program[]/character[] all work.
+            /// </summary>
+            int? EvaluateExpression(string     expression,
+                                    TA         romAddress,
+                                    Func<ushort, byte> cpuRead,
+                                    Func<int,   byte>  programRead,
+                                    Func<int,   byte>  characterRead,
+                                    Func<string, int?> regRead);
+
+            /// <summary>
+            /// Validates a condition expression at breakpoint-registration time.
+            /// Does a dry-run pre-process + expression evaluation with dummy zero values
+            /// so the IDE gets early feedback on syntax problems without side-effects.
+            /// </summary>
+            /// <param name="expression">Raw IDE condition string.</param>
+            /// <param name="error">
+            ///   Human-readable error message, or null when the expression is valid.
+            /// </param>
+            /// <returns>true when the expression is syntactically valid; false otherwise.</returns>
+            bool ValidateCondition(string expression, out string? error);
         }
-        
-        
+
+
         // TODO: convert structs to interfaces, we don't want the adaptors to be unable to handle additional information
 
         public interface ISpan {

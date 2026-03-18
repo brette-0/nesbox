@@ -1,7 +1,11 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Numerics;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace nesbox.Debug;
+
+using SER = StringExpressionEvaluator.StringExpressionEvaluator;
 
 public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryInteger<T> {
 
@@ -19,11 +23,13 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     }
 
     private sealed class SpanImpl : API.Debugging.ISpan {
-        public int                  Start  { get; set; }
-        public int                  Length { get; set; }
-        public API.Debugging.IScope Scope  { get; set; }
-        internal SpanImpl(int start, int length, API.Debugging.IScope scope) {
-            Start = start; Length = length; Scope = scope;
+        public int                  Start   { get; set; }
+        public int                  Length  { get; set; }
+        public API.Debugging.IScope Scope   { get; set; }
+        /// <summary>-1 when no scope covers this span.</summary>
+        internal int                ScopeId { get; }
+        internal SpanImpl(int start, int length, API.Debugging.IScope scope, int scopeId) {
+            Start = start; Length = length; Scope = scope; ScopeId = scopeId;
         }
     }
 
@@ -71,6 +77,26 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     public LineRec[]  RawLines  { get; private set; } = [];
     public SymRec[]   Syms      { get; private set; } = [];
     public TypeRec[]  Types     { get; private set; } = [];
+
+    // ---------- symbol-lookup tables (for EvaluateCondition) ----------
+
+    // Symbols grouped by scope ID for scope-chain walk.
+    private readonly Dictionary<int, List<SymbolImpl>> _symsByScope = [];
+
+    // All fully-qualified symbol lookup: "scope::sub::name" or "::name" (global).
+    // Used by the ca65 FQN pre-processor step.
+    private readonly Dictionary<string, int> _fqnSymbols =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // Short-name symbols in the global (anonymous) scope — last-resort fallback.
+    private readonly Dictionary<string, int> _globalSymbols =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // scope ID → parent scope ID
+    private readonly Dictionary<int, int>    _scopeParent = [];
+
+    // scope ID → FQN path string, e.g. "" / "foo" / "foo::bar"
+    private readonly Dictionary<int, string> _scopeFqn    = [];
 
     // ---------- constructor ----------
 
@@ -208,24 +234,50 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
         var spanById = RawSpans.ToDictionary(s => s.Id);
         var fileById = Files.ToDictionary(f => f.Id);
 
-        // Group symbols by the scope ID they declare membership in
-        var symsByScope = new Dictionary<int, List<API.Debugging.ISymbol>>();
+        // ── Scope parent chain ──────────────────────────────────────────────
+        var scopeById = Scopes.ToDictionary(s => s.Id);
+        foreach (var sc in Scopes)
+            if (sc.Parent.HasValue) _scopeParent[sc.Id] = sc.Parent.Value;
+
+        // ── Fully-qualified scope paths ─────────────────────────────────────
+        foreach (var sc in Scopes) {
+            var parts = new List<string>();
+            var cur   = sc;
+            while (true) {
+                if (!string.IsNullOrEmpty(cur.Name)) parts.Insert(0, cur.Name);
+                if (!cur.Parent.HasValue) break;
+                if (!scopeById.TryGetValue(cur.Parent.Value, out var par)) break;
+                cur = par;
+            }
+            _scopeFqn[sc.Id] = string.Join("::", parts);
+        }
+
+        // ── Symbol tables ───────────────────────────────────────────────────
         foreach (var sym in Syms) {
             if (sym.Val is null) continue;
+            var val     = (int)sym.Val.Value;
             var scopeId = sym.Scope ?? sym.Parent ?? 0;
-            if (!symsByScope.TryGetValue(scopeId, out var list))
-                symsByScope[scopeId] = list = [];
-            list.Add(new SymbolImpl(sym.Name, (int)sym.Val.Value));
+
+            if (!_symsByScope.TryGetValue(scopeId, out var list))
+                _symsByScope[scopeId] = list = [];
+            list.Add(new SymbolImpl(sym.Name, val));
+
+            var fqn    = _scopeFqn.TryGetValue(scopeId, out var path) ? path : "";
+            var fqnKey = string.IsNullOrEmpty(fqn) ? $"::{sym.Name}" : $"{fqn}::{sym.Name}";
+            _fqnSymbols.TryAdd(fqnKey, val);
+
+            if (string.IsNullOrEmpty(fqn))
+                _globalSymbols.TryAdd(sym.Name, val);
         }
 
-        // Build one ScopeImpl per ScopeRec, carrying its resolved symbol list
+        // ── IScope / ISpan objects ──────────────────────────────────────────
         var scopeImpls = new Dictionary<int, ScopeImpl>();
         foreach (var sc in Scopes) {
-            symsByScope.TryGetValue(sc.Id, out var symList);
-            scopeImpls[sc.Id] = new ScopeImpl(symList ?? []);
+            _symsByScope.TryGetValue(sc.Id, out var symList);
+            scopeImpls[sc.Id] = new ScopeImpl(
+                symList?.Cast<API.Debugging.ISymbol>().ToList() ?? []);
         }
 
-        // Invert ScopeRec.Spans[] to get span ID → scope ID
         var spanToScope = new Dictionary<int, int>();
         foreach (var sc in Scopes) {
             if (sc.Spans is null) continue;
@@ -235,22 +287,20 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
 
         var emptyScope = new ScopeImpl([]);
 
-        // Build _spans as a list sorted ascending by Start for binary search
         foreach (var sp in RawSpans) {
-            var scope = spanToScope.TryGetValue(sp.Id, out var sid) && scopeImpls.TryGetValue(sid, out var si)
-                ? (API.Debugging.IScope)si
-                : emptyScope;
-            var start = (int)(segById.TryGetValue(sp.Seg, out var seg) ? seg.Start + sp.Start : sp.Start);
-            _spans.Add(new SpanImpl(start, (int)sp.Size, scope));
+            int rawScopeId = spanToScope.TryGetValue(sp.Id, out var sid) ? sid : -1;
+            var scope      = rawScopeId >= 0 && scopeImpls.TryGetValue(rawScopeId, out var si)
+                             ? (API.Debugging.IScope)si : emptyScope;
+            var start      = (int)(segById.TryGetValue(sp.Seg, out var seg) ? seg.Start + sp.Start : sp.Start);
+            _spans.Add(new SpanImpl(start, (int)sp.Size, scope, rawScopeId));
         }
 
         _spans.Sort((a, b) => a.Start.CompareTo(b.Start));
 
-        // Build _lines keyed by ROM address
-        // Each LineRec references spans; the first span gives the primary ROM address
+        // ── Line map ────────────────────────────────────────────────────────
         foreach (var lr in RawLines) {
-            if (lr.Spans is null || lr.Spans.Length == 0)     continue;
-            if (!spanById.TryGetValue(lr.Spans[0], out var sp))  continue;
+            if (lr.Spans is null || lr.Spans.Length == 0)      continue;
+            if (!spanById.TryGetValue(lr.Spans[0], out var sp)) continue;
             if (!segById.TryGetValue(sp.Seg,        out var seg)) continue;
             if (!fileById.TryGetValue(lr.File,       out var f))  continue;
 
@@ -259,7 +309,371 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
         }
     }
 
-    // ---------- parsing helpers ----------
+    // ══════════════════════════════════════════════════════════════════════════
+    //  IDebugFile<T>.EvaluateCondition
+    //
+    //  Pipeline (all ca65-specific syntax is normalised before SER sees the expr):
+    //
+    //   1. $hex → 0xhex            (ca65 hex literals → SER-friendly 0x form)
+    //   2. FQN ::  → decimal       (ca65 scope qualifiers resolved from _fqnSymbols)
+    //   3. cpu[] / program[] / character[] → decimal byte literal  (safe peeks)
+    //      Steps 2-3 are iterated until stable (handles nested references).
+    //   4. SER.TryEvaluate with a scalar symbol dict built from:
+    //        – lexically-scoped ca65 symbols (innermost scope wins via TryAdd)
+    //        – global/anonymous-scope symbols (fallback)
+    //        – CPU registers and flags (via regRead, lowest priority)
+    //
+    //  Returns true (fire) on error so breakpoints fail safe.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    bool API.Debugging.IDebugFile<T>.EvaluateCondition(
+        string             expression,
+        T                  romAddress,
+        Func<ushort, byte> cpuRead,
+        Func<int,    byte> programRead,
+        Func<int,    byte> characterRead,
+        Func<string, int?> regRead)
+    {
+        try {
+            var romAddr = (int)(object)romAddress;
+
+            // Build the scalar SER symbol dict.
+            var symbols = BuildSerSymbols(romAddr, regRead);
+
+            // Pre-process ca65-specific syntax so SER gets a plain arithmetic expression.
+            var processed = Preprocess(expression, symbols, cpuRead, programRead, characterRead);
+
+            bool ok = SER.TryEvaluate(ref processed, out var result, symbols);
+
+            if (!ok) {
+                // SER could not evaluate — fire the breakpoint so the user sees something
+                // is wrong rather than silently skipping.
+                Console.WriteLine(
+                    $"[DBG] Condition ERROR — SER could not evaluate, breakpoint FORCED.\n" +
+                    $"      Raw:       '{expression}'\n" +
+                    $"      Processed: '{processed}'");
+                return true;   // force break so the user knows their condition is broken
+            }
+
+            return result != 0;
+        } catch (Exception ex) {
+            // Exception during evaluation — force break and scream.
+            Console.WriteLine($"[DBG] Condition ERROR — exception during eval, breakpoint FORCED: {ex.Message}");
+            return true;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  IDebugFile<T>.EvaluateExpression
+    //
+    //  Same pipeline as EvaluateCondition but returns the raw integer result
+    //  rather than a bool.  Returns null when evaluation fails.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    int? API.Debugging.IDebugFile<T>.EvaluateExpression(
+        string             expression,
+        T                  romAddress,
+        Func<ushort, byte> cpuRead,
+        Func<int,    byte> programRead,
+        Func<int,    byte> characterRead,
+        Func<string, int?> regRead)
+    {
+        try {
+            var romAddr = (int)(object)romAddress;
+            var symbols = BuildSerSymbols(romAddr, regRead);
+            var processed = Preprocess(expression, symbols, cpuRead, programRead, characterRead);
+            if (!SER.TryEvaluate(ref processed, out var result, symbols)) return null;
+            return result;
+        } catch {
+            return null;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Symbol dict construction
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private Dictionary<string, SER.SerUnion<int>> BuildSerSymbols(
+        int romAddress, Func<string, int?> regRead)
+    {
+        var dict = new Dictionary<string, SER.SerUnion<int>>(
+            _globalSymbols.Count + 20, StringComparer.OrdinalIgnoreCase);
+
+        // 1. CPU registers and flags — lowest priority, added first so symbols can shadow them.
+        foreach (var name in RegisterNames) {
+            var v = regRead(name);
+            if (v.HasValue) dict.TryAdd(name, new SER.SerUnion<int>(v.Value));
+        }
+
+        // 2. Global (anonymous-scope) symbols — middle priority.
+        foreach (var kv in _globalSymbols)
+            dict[kv.Key] = new SER.SerUnion<int>(kv.Value);
+
+        // 3. Lexical scope chain — highest priority (innermost scope overrides outer).
+        int? scopeId = FindScopeForAddress(romAddress);
+        while (scopeId.HasValue && scopeId.Value >= 0) {
+            if (_symsByScope.TryGetValue(scopeId.Value, out var list))
+                foreach (var sym in list)
+                    dict[sym.name] = new SER.SerUnion<int>(sym.value);  // overwrite; inner wins
+
+            scopeId = _scopeParent.TryGetValue(scopeId.Value, out var pid) ? pid : null;
+        }
+
+        return dict;
+    }
+
+    // Canonical register/flag names the regRead delegate understands.
+    private static readonly string[] RegisterNames =
+        ["A", "X", "Y", "S", "SP", "PC", "P", "N", "V", "B", "D", "I", "Z", "C"];
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  IDebugFile<T>.ValidateCondition
+    //
+    //  Dry-run: pre-process the expression with a dummy symbol dict (all values
+    //  zero) and call SER.TryEvaluate.  Returns false + error message when:
+    //    · the pre-processor cannot substitute an FQN (unknown symbol)
+    //    · SER returns false (unsupported operator, unresolved identifier)
+    //    · an exception is thrown during processing
+    // ══════════════════════════════════════════════════════════════════════════
+
+    bool API.Debugging.IDebugFile<T>.ValidateCondition(string expression, out string? error) {
+        try {
+            // Build a dummy symbol dict: every known name maps to zero.
+            var dummy = new Dictionary<string, SER.SerUnion<int>>(
+                _globalSymbols.Count + RegisterNames.Length + 4,
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var name in RegisterNames)
+                dummy.TryAdd(name, new SER.SerUnion<int>(0));
+            foreach (var kv in _globalSymbols)
+                dummy[kv.Key] = new SER.SerUnion<int>(0);
+            foreach (var list in _symsByScope.Values)
+                foreach (var sym in list)
+                    dummy.TryAdd(sym.name, new SER.SerUnion<int>(0));
+
+            var processed = Preprocess(expression, dummy,
+                _ => 0,   // cpuRead — always 0
+                _ => 0,   // programRead — always 0
+                _ => 0);  // characterRead — always 0
+
+            if (!SER.TryEvaluate(ref processed, out _, dummy)) {
+                error = $"Could not evaluate '{processed}' — check for unresolved identifiers. " +
+                        $"Supported: == != > < >= <= && || + - * / % & | ^ ! >> << >>>";
+                return false;
+            }
+
+            error = null;
+            return true;
+        } catch (Exception ex) {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Pre-processing pipeline
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private string Preprocess(
+        string                               raw,
+        Dictionary<string, SER.SerUnion<int>> symbols,
+        Func<ushort, byte>                   cpuRead,
+        Func<int,    byte>                   programRead,
+        Func<int,    byte>                   characterRead)
+    {
+        // Step 1 — ca65 hex literals:  $1A2B  →  0x1A2B
+        //   SER understands 0x-prefixed hex natively; $ is a ca65-ism.
+        var s = HexLiteralRegex.Replace(raw, m => "0x" + m.Groups[1].Value);
+
+        // Steps 2 & 3 — iterate to handle nested / interleaved references.
+        //   e.g. cpu[foo::index]  needs FQN resolved before the array peel.
+        const int maxPasses = 10;
+        for (int pass = 0; pass < maxPasses; pass++) {
+            var after2 = SubstituteFqn(s);
+            var after3 = SubstituteMemArrays(after2, symbols, cpuRead, programRead, characterRead);
+            if (after3 == s) break;     // stable — nothing more to substitute
+            s = after3;
+        }
+
+        return s;
+    }
+
+    // Matches ca65-style $HHHH hex literals that are not part of a larger identifier.
+    // Group 1 captures the hex digits.
+    private static readonly Regex HexLiteralRegex =
+        new(@"(?<![0-9A-Za-z_])\$([0-9A-Fa-f]+)", RegexOptions.Compiled);
+
+    // ------------------------------------------------------------------
+    // Step 2: FQN :: substitution
+    //   Handles:  module::symbol    ::globalSym    a::b::c
+    //   Replaces matched FQN tokens with their decimal integer values.
+    // ------------------------------------------------------------------
+    private string SubstituteFqn(string s) {
+        if (!s.Contains("::")) return s;    // fast exit — most expressions won't have FQN
+
+        var sb  = new StringBuilder(s.Length);
+        int pos = 0;
+
+        while (pos < s.Length) {
+            // Leading "::" (global-scope root)
+            bool global = pos + 1 < s.Length && s[pos] == ':' && s[pos + 1] == ':';
+            // Or start of identifier that might be followed by "::"
+            bool ident  = char.IsLetter(s[pos]) || s[pos] == '_';
+
+            if (!global && !ident) {
+                sb.Append(s[pos++]);
+                continue;
+            }
+
+            // Read the full "[ :: ] name ( :: name )*" token.
+            int    start     = pos;
+            bool   hasScoper = global;
+            var    parts     = new List<string>(4);
+
+            if (global) pos += 2;
+
+            // Read first/only name segment.
+            if (pos >= s.Length || (!char.IsLetter(s[pos]) && s[pos] != '_')) {
+                // Dangling "::" with no identifier after — emit as-is.
+                sb.Append(s, start, pos - start);
+                continue;
+            }
+
+            parts.Add(ReadIdent(s, ref pos));
+
+            // Read additional "::" segments.
+            while (pos + 1 < s.Length && s[pos] == ':' && s[pos + 1] == ':') {
+                int peek = pos + 2;
+                if (peek >= s.Length || (!char.IsLetter(s[peek]) && s[peek] != '_')) break;
+                hasScoper = true;
+                pos       = peek;
+                parts.Add(ReadIdent(s, ref pos));
+            }
+
+            // Only treat this as a FQN token if it actually contained "::".
+            if (!hasScoper || parts.Count == 0) {
+                sb.Append(s, start, pos - start);
+                continue;
+            }
+
+            // Build the lookup key the way the constructor stored them.
+            var path = global
+                ? $"::{string.Join("::", parts)}"
+                : string.Join("::", parts);
+
+            if (_fqnSymbols.TryGetValue(path, out var val)) {
+                sb.Append(val);
+            } else {
+                // Unknown FQN — leave the original text so SER can produce a useful error.
+                sb.Append(s, start, pos - start);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    // ------------------------------------------------------------------
+    // Step 3: cpu[] / program[] / character[] substitution
+    //   Finds the first innermost occurrence of one of the three keywords
+    //   followed by "[expr]", evaluates expr with SER, does the safe peek,
+    //   and replaces the whole token with the byte value as a decimal literal.
+    //   Returns (result, changed) so the caller can iterate.
+    // ------------------------------------------------------------------
+    private static string SubstituteMemArrays(
+        string                               s,
+        Dictionary<string, SER.SerUnion<int>> symbols,
+        Func<ushort, byte>                   cpuRead,
+        Func<int,    byte>                   programRead,
+        Func<int,    byte>                   characterRead)
+    {
+        // Find the leftmost occurrence of any of our keywords followed by '['.
+        // We work left-to-right and replace one at a time, then the caller retries.
+        foreach (var kw in MemArrayKeywords) {
+            int kwPos = s.IndexOf(kw + "[", StringComparison.OrdinalIgnoreCase);
+            if (kwPos < 0) continue;
+
+            // Ensure the keyword isn't a suffix of a longer identifier.
+            // (e.g. "notcpu[" should not match "cpu[")
+            if (kwPos > 0 && (char.IsLetterOrDigit(s[kwPos - 1]) || s[kwPos - 1] == '_'))
+                continue;
+
+            int bracketOpen  = kwPos + kw.Length;          // index of '['
+            int contentStart = bracketOpen + 1;             // index after '['
+
+            // Find the matching ']' — track nesting depth for nested brackets.
+            int depth = 1;
+            int i     = contentStart;
+            while (i < s.Length && depth > 0) {
+                if      (s[i] == '[') depth++;
+                else if (s[i] == ']') depth--;
+                if (depth > 0) i++;
+            }
+
+            if (depth != 0) continue;   // unmatched bracket — skip
+
+            int bracketClose = i;       // index of matching ']'
+            var indexExpr    = s[contentStart..bracketClose];
+
+            // Evaluate the index expression with SER.
+            // Pass a copy — SER takes expr by ref and may normalise it.
+            var exprCopy = indexExpr;
+            if (!SER.TryEvaluate(ref exprCopy, out var index, symbols)) {
+                // Cannot evaluate index yet (perhaps a nested memory array still
+                // needs to be substituted in a later pass) — skip this occurrence.
+                continue;
+            }
+
+            // Do the safe, side-effect-free memory read.
+            byte value = kw.ToLowerInvariant() switch {
+                "cpu"       => cpuRead((ushort)(index & 0xFFFF)),
+                "program"   => programRead(index),
+                "character" => characterRead(index),
+                _           => 0
+            };
+
+            // Replace "keyword[indexExpr]" with the decimal byte value.
+            int  tokenLen = kw.Length + 1 + (bracketClose - contentStart) + 1;
+            //               ^kw       ^[   ^content len                   ^]
+            s = s[..kwPos] + value.ToString() + s[(kwPos + tokenLen)..];
+            return s;   // one substitution per call; caller iterates
+        }
+
+        return s;   // no substitution made
+    }
+
+    private static readonly string[] MemArrayKeywords = ["cpu", "program", "character"];
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Scope helpers
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private int? FindScopeForAddress(int romAddress) {
+        int lo = 0, hi = _spans.Count - 1, found = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (_spans[mid].Start <= romAddress) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        if (found < 0) return null;
+        var span = (SpanImpl)_spans[found];
+        return romAddress < span.Start + span.Length ? span.ScopeId : null;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Small helpers
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Reads an identifier from <paramref name="s"/> starting at <paramref name="pos"/>.</summary>
+    private static string ReadIdent(string s, ref int pos) {
+        int start = pos;
+        while (pos < s.Length && (char.IsLetterOrDigit(s[pos]) || s[pos] == '_'))
+            pos++;
+        return s[start..pos];
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  .dbg file parsing helpers (unchanged)
+    // ══════════════════════════════════════════════════════════════════════════
 
     private static Dictionary<string, string> ParseKv(string s, int lineNo) {
         var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
