@@ -323,7 +323,7 @@ internal static class OpCodes {
         #region 0x80-0x90
 
         /* 80 nop #   */ () => Immediate(NOP),
-        /* 81 sta *+y */ () => IndirectIndexed(STA),
+        /* 81 sta *+x */ () => IndexedIndirect(STA),
         /* 82 nop #   */ () => Immediate(NOP),
         /* 83 sax *+x */ () => IndexedIndirect(SAX),
         /* 84 sty d   */ () => DirectPage(STY),
@@ -1003,8 +1003,8 @@ internal static class OpCodes {
     private static void __CMP() {
         var diff = (short)(Register.AC - Data);
         Register.c   = diff               >= 0;
-        NonArithmeticProcessorFlagSets(Register.AC);
-    } 
+        NonArithmeticProcessorFlagSets((byte)diff);
+    }
     
     private static readonly unsafe Opcode CMP = new(&__CMP, RWKind.Read);
 
@@ -1012,7 +1012,7 @@ internal static class OpCodes {
     private static void __CPX() {
         var diff = (short)(Register.X - Data);
         Register.c   = diff               >= 0;
-        NonArithmeticProcessorFlagSets(Register.X);
+        NonArithmeticProcessorFlagSets((byte)diff);
     }
     private static readonly unsafe Opcode CPX = new(&__CPX, RWKind.Read);
     
@@ -1021,7 +1021,7 @@ internal static class OpCodes {
     private static void __CPY() {
         var diff = (short)(Register.Y - Data);
         Register.c   = diff               >= 0;
-        NonArithmeticProcessorFlagSets(Register.Y);
+        NonArithmeticProcessorFlagSets((byte)diff);
     }
     
     private static readonly unsafe Opcode CPY = new(&__CPY, RWKind.Read);

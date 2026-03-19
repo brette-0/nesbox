@@ -42,6 +42,8 @@ internal static class Implementation {
                 case "--debugFile":
                     if (args.MoveNext()) {
                         dbgFile = new Ld65Dbg<int>(args.Current);
+                        Debugger.SourceRoot = global::System.IO.Path.GetDirectoryName(
+                            global::System.IO.Path.GetFullPath(args.Current)) ?? string.Empty;
                         if (System.Quit) return cartridge;
                         break;
                     }

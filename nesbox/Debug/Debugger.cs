@@ -197,9 +197,25 @@ public static class Debugger {
     // -----------------------------------------------------------------------
 
     internal static async Task StepOnceAsync() {
-        Step();
+        StepInstruction();
         Renderer.Present();
         await WriteStoppedEventAsync("step");
+    }
+
+    // Step one complete 6502 instruction.
+    // Advances cycles until System.cycle wraps back to 0, which is the moment
+    // the CPU has finished the current instruction and is ready to fetch the next.
+    // If we enter mid-instruction (cycle != 0) we finish that one first, then
+    // execute the next full instruction so the stopped line is always the
+    // instruction AFTER the one that was current when the user pressed step.
+    private static void StepInstruction() {
+        // If mid-instruction, drain remaining cycles to reach the next boundary.
+        if (System.cycle != 0) {
+            do { StepCycle(); } while (System.cycle != 0);
+        }
+        // Now at cycle==0 (instruction boundary). Execute one full instruction.
+        StepCycle();                            // cycle 0→1: fetch opcode
+        while (System.cycle != 0) StepCycle(); // remaining cycles until done
     }
 
     internal static async Task StepOverAsync() {
@@ -220,7 +236,7 @@ public static class Debugger {
     }
 
     private static bool StepCheckBreak() {
-        Step();
+        StepCycle();
         bool hit;
         lock (_breakPointLock) {
             var bp = BreakPoints.Find(t => t!.Value.pos == _currentLineNumber);
@@ -239,7 +255,8 @@ public static class Debugger {
         return hit;
     }
 
-    private static void Step() {
+    // Advance the emulator by exactly one CPU cycle.
+    private static void StepCycle() {
         if (System.cycle is 0) {
             _lastLineNumber    = _currentLineNumber;
             _currentRomAddress = Program.Cartridge.GetROMLocation(System.PC);
@@ -407,7 +424,20 @@ public static class Debugger {
             case "stackTrace": {
                 SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa);
                 var fileName = IO.Path.GetFileName(sa.fp);
-                var fullPath = _idePaths.TryGetValue(fileName, out var ip) ? ip : sa.fp;
+
+                // Resolve the full path for the source file:
+                // 1. Use whatever full path the IDE already told us (from setBreakpoints).
+                // 2. Otherwise combine SourceRoot with the (possibly relative) path from the .dbg file.
+                // 3. Fall back to the raw fp string if all else fails.
+                string fullPath;
+                if (_idePaths.TryGetValue(fileName, out var ip)) {
+                    fullPath = ip;
+                } else if (!string.IsNullOrEmpty(SourceRoot) && !IO.Path.IsPathRooted(sa.fp)) {
+                    var candidate = IO.Path.GetFullPath(IO.Path.Combine(SourceRoot, sa.fp));
+                    fullPath = IO.File.Exists(candidate) ? candidate : sa.fp;
+                } else {
+                    fullPath = sa.fp;
+                }
                 await WriteRawResponseAsync(msg, BuildJson(w => {
                     w.WriteStartArray("stackFrames");
                     w.WriteStartObject();
@@ -511,9 +541,12 @@ public static class Debugger {
                 }
 
                 if (value.HasValue) {
-                    // Show decimal, hex byte, and hex word so the user gets context.
+                    // Display the raw symbol/expression value.
+                    // Format as byte ($XX) or word ($XXXX) based on magnitude.
+                    // Never truncate — (byte)cast was producing a second spurious value.
                     var v   = value.Value;
-                    var res = $"{v}  (${(byte)v:X2})" + (v > 0xFF ? $"  (${v:X4})" : "");
+                    var hex = v > 0xFF ? $"${v:X4}" : $"${v:X2}";
+                    var res = $"{v}  ({hex})";
                     await WriteRawResponseAsync(msg, BuildJson(w => {
                         w.WriteString("result",             res);
                         w.WriteNumber("variablesReference", 0);
@@ -825,6 +858,8 @@ public static class Debugger {
 
     internal static API.Debugging.IDebugFile<int>? _debugFile;
     internal static bool                            debugging;
+    // Directory containing the .dbg file — used to resolve relative source paths.
+    internal static string                          SourceRoot = string.Empty;
     private  const  int                             DapPort = 4711;
 
     internal static readonly ManualResetEventSlim ResumeEvent  = new(false);

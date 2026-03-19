@@ -101,6 +101,7 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     // ---------- constructor ----------
 
     public Ld65Dbg(string filepath) {
+        var dbgDir = Path.GetDirectoryName(Path.GetFullPath(filepath)) ?? Environment.CurrentDirectory;
         var files  = new List<FileRec>();
         var mods   = new List<ModRec>();
         var libs   = new List<LibRec>();
@@ -305,7 +306,7 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
             if (!fileById.TryGetValue(lr.File,       out var f))  continue;
 
             var romAddr = (T)(object)(int)(seg.Start + sp.Start);
-            _lines.TryAdd(romAddr, new LineImpl(f.Name, (int)lr.Line));
+            _lines.TryAdd(romAddr, new LineImpl(ResolveSourcePath(f.Name, dbgDir), (int)lr.Line));
         }
     }
 
@@ -586,56 +587,66 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
         Func<int,    byte>                   programRead,
         Func<int,    byte>                   characterRead)
     {
-        // Find the leftmost occurrence of any of our keywords followed by '['.
-        // We work left-to-right and replace one at a time, then the caller retries.
+        // Find the first occurrence of any keyword followed by '[' whose index
+        // expression SER can evaluate right now.  We scan all occurrences of each
+        // keyword (not just the leftmost) so that inner/nested references are
+        // resolved before the outer one is attempted.
+        // e.g. cpu[(cpu[hi] << 8) | cpu[lo]]  — the outer cpu[ cannot be evaluated
+        // until both inner cpu[ have been substituted first.
         foreach (var kw in MemArrayKeywords) {
-            int kwPos = s.IndexOf(kw + "[", StringComparison.OrdinalIgnoreCase);
-            if (kwPos < 0) continue;
+            int searchFrom = 0;
+            while (true) {
+                int kwPos = s.IndexOf(kw + "[", searchFrom, StringComparison.OrdinalIgnoreCase);
+                if (kwPos < 0) break;   // no more occurrences of this keyword
 
-            // Ensure the keyword isn't a suffix of a longer identifier.
-            // (e.g. "notcpu[" should not match "cpu[")
-            if (kwPos > 0 && (char.IsLetterOrDigit(s[kwPos - 1]) || s[kwPos - 1] == '_'))
-                continue;
+                // Ensure the keyword isn't a suffix of a longer identifier.
+                // (e.g. "notcpu[" should not match "cpu[")
+                if (kwPos > 0 && (char.IsLetterOrDigit(s[kwPos - 1]) || s[kwPos - 1] == '_')) {
+                    searchFrom = kwPos + 1;
+                    continue;
+                }
 
-            int bracketOpen  = kwPos + kw.Length;          // index of '['
-            int contentStart = bracketOpen + 1;             // index after '['
+                int bracketOpen  = kwPos + kw.Length;      // index of '['
+                int contentStart = bracketOpen + 1;         // index after '['
 
-            // Find the matching ']' — track nesting depth for nested brackets.
-            int depth = 1;
-            int i     = contentStart;
-            while (i < s.Length && depth > 0) {
-                if      (s[i] == '[') depth++;
-                else if (s[i] == ']') depth--;
-                if (depth > 0) i++;
+                // Find the matching ']' — track nesting depth for nested brackets.
+                int depth = 1;
+                int i     = contentStart;
+                while (i < s.Length && depth > 0) {
+                    if      (s[i] == '[') depth++;
+                    else if (s[i] == ']') depth--;
+                    if (depth > 0) i++;
+                }
+
+                if (depth != 0) { searchFrom = kwPos + 1; continue; }  // unmatched — skip
+
+                int bracketClose = i;       // index of matching ']'
+                var indexExpr    = s[contentStart..bracketClose];
+
+                // Evaluate the index expression with SER.
+                // Pass a copy — SER takes expr by ref and may normalise it.
+                var exprCopy = indexExpr;
+                if (!SER.TryEvaluate(ref exprCopy, out var index, symbols)) {
+                    // Cannot evaluate this occurrence yet (e.g. it still contains a
+                    // nested cpu[] reference).  Try the next occurrence of this keyword.
+                    searchFrom = kwPos + 1;
+                    continue;
+                }
+
+                // Do the safe, side-effect-free memory read.
+                byte value = kw.ToLowerInvariant() switch {
+                    "cpu"       => cpuRead((ushort)(index & 0xFFFF)),
+                    "program"   => programRead(index),
+                    "character" => characterRead(index),
+                    _           => 0
+                };
+
+                // Replace "keyword[indexExpr]" with the decimal byte value.
+                int  tokenLen = kw.Length + 1 + (bracketClose - contentStart) + 1;
+                //               ^kw       ^[   ^content len                   ^]
+                s = s[..kwPos] + value.ToString() + s[(kwPos + tokenLen)..];
+                return s;   // one substitution per call; caller iterates
             }
-
-            if (depth != 0) continue;   // unmatched bracket — skip
-
-            int bracketClose = i;       // index of matching ']'
-            var indexExpr    = s[contentStart..bracketClose];
-
-            // Evaluate the index expression with SER.
-            // Pass a copy — SER takes expr by ref and may normalise it.
-            var exprCopy = indexExpr;
-            if (!SER.TryEvaluate(ref exprCopy, out var index, symbols)) {
-                // Cannot evaluate index yet (perhaps a nested memory array still
-                // needs to be substituted in a later pass) — skip this occurrence.
-                continue;
-            }
-
-            // Do the safe, side-effect-free memory read.
-            byte value = kw.ToLowerInvariant() switch {
-                "cpu"       => cpuRead((ushort)(index & 0xFFFF)),
-                "program"   => programRead(index),
-                "character" => characterRead(index),
-                _           => 0
-            };
-
-            // Replace "keyword[indexExpr]" with the decimal byte value.
-            int  tokenLen = kw.Length + 1 + (bracketClose - contentStart) + 1;
-            //               ^kw       ^[   ^content len                   ^]
-            s = s[..kwPos] + value.ToString() + s[(kwPos + tokenLen)..];
-            return s;   // one substitution per call; caller iterates
         }
 
         return s;   // no substitution made
@@ -662,6 +673,32 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     // ══════════════════════════════════════════════════════════════════════════
     //  Small helpers
     // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Resolves a source file path stored in the .dbg file to an absolute path.
+    /// Relative paths are resolved relative to <paramref name="dbgDir"/> (the directory
+    /// of the .dbg file), since ca65/ld65 records paths relative to the build directory.
+    /// Absolute paths are returned unchanged after normalising separators.
+    /// </summary>
+    private static string ResolveSourcePath(string path, string dbgDir) {
+        // Normalise forward-slash separators that ld65 emits on all platforms.
+        path = path.Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
+
+        // ld65 records paths relative to where the build was invoked (the project
+        // root / Makefile directory), which is often a parent of the directory that
+        // holds the .dbg file (e.g. bin/).  Walk up from dbgDir until we find a
+        // directory where the relative path resolves to a file that actually exists.
+        var dir = dbgDir;
+        while (dir is not null) {
+            var candidate = Path.GetFullPath(Path.Combine(dir, path));
+            if (File.Exists(candidate)) return candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        // Fallback: resolve relative to dbgDir even if the file isn't found.
+        return Path.GetFullPath(Path.Combine(dbgDir, path));
+    }
 
     /// <summary>Reads an identifier from <paramref name="s"/> starting at <paramref name="pos"/>.</summary>
     private static string ReadIdent(string s, ref int pos) {

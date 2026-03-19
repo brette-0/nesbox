@@ -15,7 +15,10 @@ internal static class Renderer {
         private static void __Initialize() {
             SDL.Init(SDL.InitFlags.Video);
             
-            _window   = SDL.CreateWindow("RENDER OUT", 256, 240, 0);
+            // NOT_FOCUSABLE prevents the SDL window from stealing keyboard focus
+            // from the terminal running Neovim — without this, keypresses like F11
+            // go to SDL rather than nvim-dap.
+            _window   = SDL.CreateWindow("RENDER OUT", 256, 240, SDL.WindowFlags.NotFocusable);
 
             if (_window is 0) {
                 Console.WriteLine($"[SDL3] Create Window Failed: {SDL.GetError()}");
