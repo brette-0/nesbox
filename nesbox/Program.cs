@@ -1,6 +1,5 @@
 ﻿namespace nesbox;
 
-using NAudio.Wave;
 using EList;
 
 internal static class Program {
@@ -105,6 +104,9 @@ internal static class Program {
         }
 
         while (!Renderer.RendererReady) { }         // wait for renderer to become ready
+        Audio.Initialize(); if (System.Quit) {
+            return;
+        }
         System.Initialize(); if (System.Quit) {
             return;
         }

@@ -1,63 +1,53 @@
-﻿using NAudio.Wave;
+using SDL3;
+using System.Runtime.InteropServices;
 
 namespace nesbox;
 
 internal static class Audio {
-    public sealed class SineWaveProvider16 : IWaveProvider
-    {
-        private readonly WaveFormat _format;
-        private          double     _phase;
-        private          double     _phaseStep; // radians per sample
-        private volatile float      _volume;    // 0..1
+    private static nint _stream;
 
-        public SineWaveProvider16(int sampleRate = 48000, int channels = 1)
-        {
-            _format     = new WaveFormat(sampleRate, 16, channels);
-            FrequencyHz = 440.0;
-            Volume      = 0.2f;
+    // 2 frames of float32 mono at 48 kHz: 800 samples × 4 bytes × 2
+    private const int TargetQueueBytes = 6_400;
+
+    internal static void Initialize() {
+        SDL.Init(SDL.InitFlags.Audio);
+
+        var spec = new SDL.AudioSpec {
+            Format   = SDL.AudioFormat.AudioF32LE,
+            Channels = 1,
+            Freq     = (int)System.SamplingFrequency
+        };
+
+        _stream = SDL.OpenAudioDeviceStream(
+            SDL.AudioDeviceDefaultPlayback, ref spec, null, IntPtr.Zero);
+
+        if (_stream is 0) {
+            Console.WriteLine($"[Audio] Failed to open audio device: {SDL.GetError()}");
+            System.Quit = true;
+            return;
         }
 
-        public WaveFormat WaveFormat => _format;
+        SDL.ResumeAudioStreamDevice(_stream);
+        Console.WriteLine("[Audio] Initialized");
+    }
 
-        public double FrequencyHz
-        {
-            get => _phaseStep * _format.SampleRate / (2.0 * Math.PI);
-            set => _phaseStep = 2.0                       * Math.PI * value / _format.SampleRate;
+    internal static void Drain(List<float> buffer) {
+        if (_stream is 0 || buffer.Count is 0) {
+            buffer.Clear();
+            return;
         }
 
-        public float Volume
-        {
-            get => _volume;
-            set => _volume = Math.Clamp(value, 0f, 1f);
+        if (SDL.GetAudioStreamQueued(_stream) < TargetQueueBytes) {
+            var bytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(buffer)).ToArray();
+            SDL.PutAudioStreamData(_stream, bytes, bytes.Length);
         }
 
-        public int Read(byte[] buffer, int offset, int count)
-        {
-            // 16-bit PCM: 2 bytes per sample per channel
-            int bytesPerFrame = 2     * _format.Channels;
-            int frameCount    = count / bytesPerFrame;
+        buffer.Clear();
+    }
 
-            int   outIndex = offset;
-            float vol      = _volume;
-
-            for (int i = 0; i < frameCount; i++)
-            {
-                float sample = (float)Math.Sin(_phase) * vol;
-                _phase += _phaseStep;
-                if (_phase >= 2.0 * Math.PI) _phase -= 2.0 * Math.PI;
-
-                short s16 = (short)Math.Clamp(sample * 32767f, short.MinValue, short.MaxValue);
-
-                // write same sample to all channels (mono->stereo duplication if channels=2)
-                for (int ch = 0; ch < _format.Channels; ch++)
-                {
-                    buffer[outIndex++] = (byte)(s16        & 0xFF);
-                    buffer[outIndex++] = (byte)((s16 >> 8) & 0xFF);
-                }
-            }
-
-            // return exact byte count produced (whole frames)
-            return frameCount * bytesPerFrame;
-        }
+    internal static void Shutdown() {
+        if (_stream is 0) return;
+        SDL.DestroyAudioStream(_stream);
+        _stream = 0;
     }
 }

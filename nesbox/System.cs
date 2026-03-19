@@ -37,8 +37,17 @@ internal static class System {
 
                 if (!NMIAlreadyEnabled && NMIEnabled && inVblank) NMIAsserted = true;
             }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void R2002_PPUSTATUS() {
+                Data         = (byte)(Data & 0x1f);              // preserve open bus bits 4:0
+                Data        |= (byte)(inVblank ? 0x80 : 0x00);  // bit 7: VBlank
+                // bit 6 (sprite 0 hit) and bit 5 (sprite overflow) remain 0 until PPU rendering is implemented
+                inVblank     = false;
+                NMIAsserted  = false;
+            }
         }
-        
+
         internal static class OAM {
             internal static void W4014_OAMDMA() {
                 inDMA        = true;
@@ -51,6 +60,11 @@ internal static class System {
                 dmaAlign    = virtualTime % 6 is 0;     // aligned if on an even cpu cycle
             }
             
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void R2004_OAMDATA() {
+                Data = OAMBuffer[OAMAddress];
+            }
+
             internal static void DMA() {
                 if (!inDMA || APU.PCM.inDMA) return;
                 if (oamHaltCycle) {
@@ -967,6 +981,11 @@ internal static class System {
                 }
 
                 Renderer.Present();
+
+                if (Throttle == 1f)
+                    Audio.Drain(SampleBuffer);
+                else
+                    SampleBuffer.Clear();
 
                 var workEndTick = Stopwatch.GetTimestamp();
 
