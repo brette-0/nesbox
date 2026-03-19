@@ -1161,11 +1161,10 @@ internal static class OpCodes {
         var c   = Register.c ? 1 : 0;
         var sum = (ushort)(Register.AC + Data + c);
 
-        var (sa, sc) = (Register.AC > 0x7f, Data > 0x7f);
-        
+        var oldAC   = Register.AC;
         Register.c  = sum > 0xff;
         Register.AC = (byte)sum;
-        Register.v  = Register.AC > 0x7f == sa == sc;
+        Register.v  = (~(oldAC ^ Data) & (oldAC ^ Register.AC) & 0x80) != 0;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
@@ -1174,10 +1173,10 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SBC() {
         var diff = (short)(Register.AC - Data - (Register.c ? 0 : 1));
-        var (sa, sc) = (Register.AC > 0x7f, Data > 0x7f);
+        var oldAC    = Register.AC;
         Register.AC  = (byte)diff;
-        Register.c   = diff               >= 0;
-        Register.v   = Register.AC > 0x7f == sa == sc;
+        Register.c   = diff >= 0;
+        Register.v   = ((oldAC ^ Data) & (oldAC ^ Register.AC) & 0x80) != 0;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
@@ -1185,16 +1184,16 @@ internal static class OpCodes {
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __XAA() {
-        NonArithmeticProcessorFlagSets(Register.AC);
         Register.AC = (byte)((Register.AC | Random.Shared.Next()) & Register.X & Data);
+        NonArithmeticProcessorFlagSets(Register.AC);
     }
     
     private static readonly unsafe Opcode XAA = new(&__XAA, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LAXI() {
-        NonArithmeticProcessorFlagSets(Register.AC);
         Register.AC = Register.X = (byte)((Register.AC | Random.Shared.Next()) & Data);
+        NonArithmeticProcessorFlagSets(Register.AC);
     }
     
     private static readonly unsafe Opcode LAXI = new(&__LAXI, RWKind.Read);
@@ -1238,16 +1237,17 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ARR() {
         __AND();
-        Register.c = Data >> 7 is 1;
-        Register.v = ((Data >> 7) ^ (Data >> 6) & 1) is 1;
         RORA();
+        Register.c = (Register.AC >> 6 & 1) is 1;
+        Register.v = ((Register.AC >> 6 & 1) ^ (Register.AC >> 5 & 1)) is 1;
     }
     private static readonly unsafe Opcode ARR = new(&__ARR, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __AXS() {
-        Register.X ^= Register.AC;
-        Register.X -= Data;
+        var result = (short)((Register.AC & Register.X) - Data);
+        Register.c = result >= 0;
+        Register.X = (byte)result;
         NonArithmeticProcessorFlagSets(Register.X);
     }
     
@@ -1294,7 +1294,7 @@ internal static class OpCodes {
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __EOR() {
-        Register.AC &= Data;
+        Register.AC ^= Data;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
