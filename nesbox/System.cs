@@ -12,14 +12,18 @@ internal static class System {
         private const ulong VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
 
 
+        // NTSC PPU suppresses VBlank for ~29658 CPU cycles after reset.
+        // 29658 CPU cycles × 3 PPU dots/cycle = 88974 PPU dots.
+        // First VBLANK_SET_DOT at dot 82182 is suppressed (82182 < 88974).
+        // Second VBLANK_SET_DOT at dot 171524 goes through (171524 > 88974).
+        internal const ulong  WARMUP_DOTS = 29658 * 3; // 88974
+        internal static ulong warmupEndDot;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Step() {
             switch (virtualTime % DOTS_PER_FRAME) {
                 case VBLANK_SET_DOT:
-                    if (warmupFramesRemaining > 0) {
-                        warmupFramesRemaining--;
-                        break;
-                    }
+                    if (virtualTime < warmupEndDot) break;
                     inVblank = true;
                     EdgeDetectNMI();
                     break;
@@ -118,7 +122,6 @@ internal static class System {
         internal static bool   inDMA;
         internal static bool   inVblank;
         internal static bool   nmiLine;
-        internal static byte   warmupFramesRemaining;
         internal static bool   oamHaltCycle = false;
         internal static byte   OAMAddress;
         internal static byte   OAMData;
@@ -944,7 +947,7 @@ internal static class System {
 
         Reset    = true;
         OpHandle = StepReset;
-        PPU.warmupFramesRemaining = 2;
+        PPU.warmupEndDot = virtualTime + PPU.WARMUP_DOTS;
 
         const double fps = 60.0988d;
         var frameTimeSeconds = 1.0 / fps;
@@ -1059,15 +1062,10 @@ internal static class System {
             }
             
             if (NMIAsserted) {
-                if (_inNmiHandler) {
-                    NMIAsserted = false; // Suppress re-entrant NMI
-                } else {
-                    _inNmiHandler = true;
-                    NMIAsserted = false;
-                    Vector      = Vectors.NMI;
-                    OpHandle    = Interrupt;
-                    goto HandleInstruction;
-                }
+                NMIAsserted = false;
+                Vector      = Vectors.NMI;
+                OpHandle    = Interrupt;
+                goto HandleInstruction;
             }
 
             if (CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag) {
@@ -1226,7 +1224,6 @@ internal static class System {
     internal static ushort Vector;
     internal static bool   CPU_IRQ;
     internal static bool   NMIAsserted;
-    internal static bool   _inNmiHandler;
     private static  bool   Reset;
     
     internal static Action OpHandle;

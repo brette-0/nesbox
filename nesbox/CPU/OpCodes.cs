@@ -678,7 +678,6 @@ internal static class OpCodes {
             case 5:
                 Address = PC;
                 Memory.CPU_Read();
-                _inNmiHandler = false;
                 cycle = 0xff;
                 break;
 
