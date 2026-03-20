@@ -678,7 +678,7 @@ internal static class OpCodes {
             case 5:
                 Address = PC;
                 Memory.CPU_Read();
-
+                _inNmiHandler = false;
                 cycle = 0xff;
                 break;
 
@@ -769,11 +769,6 @@ internal static class OpCodes {
                 
             case 5:
                 PC++;
-                break;
-
-            case 6:
-                Address = PC;
-                Memory.CPU_Read();
                 cycle = 0xff;
                 break;
 
@@ -939,6 +934,7 @@ internal static class OpCodes {
     }
     
     // interrupts only occur after an instruction has finished, so we can evaluate the condition immediately
+    // Taken no-cross = 3 cycles, taken cross = 4 cycles, not taken = 2 cycles.
     private static void Branch(bool take) {
         switch (cycle) {
             case 1:
@@ -953,13 +949,6 @@ internal static class OpCodes {
                 break;
 
             case 2:
-                // Taken → dummy read at current PC
-                AD = PC;
-                DriveAddressPins();
-                Memory.CPU_Read();
-                break;
-
-            case 3:
                 var rel = (sbyte)DB;
                 var target = (ushort)(PC + rel);
 
@@ -974,7 +963,7 @@ internal static class OpCodes {
                 else Data = (byte)(target >> 8);
                 break;
 
-            case 4:
+            case 3:
                 ADH = Data;
                 DriveAddressPins();
                 Memory.CPU_Read();
@@ -996,7 +985,7 @@ internal static class OpCodes {
         RMW
     }
 
-    private static                 void   __NOP() { }
+    private static                 void   __NOP() { cycle = 0xff; }
     private static readonly unsafe Opcode NOP = new(&__NOP, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1224,6 +1213,7 @@ internal static class OpCodes {
     private static void LSRA() {
         Register.c  =   (Register.AC & 1) is 1;
         Register.AC >>= 1;
+        cycle       =   0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
@@ -1231,6 +1221,7 @@ internal static class OpCodes {
     private static void ASLA() {
         Register.c  =   (Register.AC & 0x80) is 0x80;
         Register.AC <<= 1;
+        cycle       =   0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
 
@@ -1265,6 +1256,7 @@ internal static class OpCodes {
         var c      = (byte)(Register.AC & 1);
         Register.AC = (byte)((Register.c ? 0x80 : 0x00) | (Register.AC >> 1));
         Register.c  = c is 1;
+        cycle       = 0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
@@ -1273,6 +1265,7 @@ internal static class OpCodes {
         var c      = (byte)(Register.AC                          >> 7);
         Register.AC = (byte)((Register.c ? 1 : 0) | (Register.AC << 1));
         Register.c  = c is 1;
+        cycle       = 0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
     
@@ -1508,6 +1501,7 @@ internal static class OpCodes {
             
             case 3:
                 DriveAddressPins();
+                if (op.kind is RWKind.Write) goto complete;
                 Memory.CPU_Read();
 
                 if (op.kind is RWKind.RMW) break;
@@ -1561,6 +1555,7 @@ internal static class OpCodes {
             
             case 2:
                 DriveAddressPins();
+                if (op.kind is RWKind.Write) goto complete;
                 Memory.CPU_Read();
                 
                 if (op.kind is RWKind.RMW) break;

@@ -16,26 +16,37 @@ internal static class System {
         internal static void Step() {
             switch (virtualTime % DOTS_PER_FRAME) {
                 case VBLANK_SET_DOT:
-                    inVblank = true;
-
-                    if (NMIEnabled) {
-                        NMIAsserted = true;
+                    if (warmupFramesRemaining > 0) {
+                        warmupFramesRemaining--;
+                        break;
                     }
+                    inVblank = true;
+                    EdgeDetectNMI();
                     break;
                 
                 case VBLANK_CLEAR_DOT:
                     inVblank = false;
+                    nmiLine  = false;
                     break;
             }
+        }
+
+        // NMI is edge-triggered on real hardware.
+        // /NMI output = inVblank AND NMIEnabled.
+        // CPU latches NMI only on the 0→1 transition of that signal.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void EdgeDetectNMI() {
+            var newLine = inVblank && NMIEnabled;
+            if (newLine && !nmiLine)
+                NMIAsserted = true;
+            nmiLine = newLine;
         }
 
         internal static class Registers {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2000_PPUCRTL() {
-                var NMIAlreadyEnabled = NMIEnabled;
                 NMIEnabled = (Data & 0x80) is 0x80;
-
-                if (!NMIAlreadyEnabled && NMIEnabled && inVblank) NMIAsserted = true;
+                EdgeDetectNMI();
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -44,7 +55,8 @@ internal static class System {
                 Data        |= (byte)(inVblank ? 0x80 : 0x00);  // bit 7: VBlank
                 // bit 6 (sprite 0 hit) and bit 5 (sprite overflow) remain 0 until PPU rendering is implemented
                 inVblank     = false;
-                NMIAsserted  = false;
+                nmiLine      = false;   // /NMI goes high when vblank clears
+                NMIAsserted  = false;   // suppress pending NMI (race-condition behavior)
             }
         }
 
@@ -105,6 +117,8 @@ internal static class System {
         internal static bool   NMIEnabled;
         internal static bool   inDMA;
         internal static bool   inVblank;
+        internal static bool   nmiLine;
+        internal static byte   warmupFramesRemaining;
         internal static bool   oamHaltCycle = false;
         internal static byte   OAMAddress;
         internal static byte   OAMData;
@@ -401,7 +415,6 @@ internal static class System {
 
             internal static byte GetLevel() {
                 if (!enabled || Length == 0 || linearCounter == 0) return 0;
-
                 var s  = sequencer & 0x1f;
                 return (byte)(s < 0x10 ? 0x0f - s : s - 0x10);
             }
@@ -418,7 +431,7 @@ internal static class System {
             internal static void HalfFrame() {
                 if (Length > 0 && !control) Length--;
             }
-
+            
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W4008_Triangle() {
                 control     = (Data       & 0x80) is 0x80;
@@ -487,7 +500,8 @@ internal static class System {
                     if (target > 0x7ff) return 0;
                 }
                 
-                if (DutyTable[Duty] >> seq is 0) return 0;
+                var dutyBit = (DutyTable[Duty] >> seq) & 1;
+                if (dutyBit is 0) return 0;
                 return ConstantVolume ? Volume : envDecay;
             }
 
@@ -793,14 +807,14 @@ internal static class System {
             
             if (address < 0x4000) {
                 switch (address & 0x2007) {
-                    case PPUCTRL:   data = (byte)(address >> 8); goto SendReadToCart;
-                    case PPUMASK:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUMASK Not Implemented PC={PC}");
-                    case PPUSTATUS: throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUSTATUS Not Implemented PC={PC}");
-                    case OAMADDR:   throw new NotImplementedException($"[CPU] [Memory] [PPU] OAMADDR Not Implemented PC={PC}");
-                    case OAMDATA:   throw new NotImplementedException($"[CPU] [Memory] [PPU] OAMDATA Not Implemented PC={PC}");
-                    case PPUSCROLL: throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUSCROLL Not Implemented PC={PC}");
-                    case PPUADDR:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUADDR Not Implemented PC={PC}");
-                    case PPUDATA:   throw new NotImplementedException($"[CPU] [Memory] [PPU] PPUDATA Not Implemented PC={PC}");
+                    case PPUCTRL:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case PPUMASK:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case PPUSTATUS: PPU.Registers.R2002_PPUSTATUS(); data = Data; goto SendReadToCart;
+                    case OAMADDR:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case OAMDATA:   PPU.OAM.R2004_OAMDATA();         data = Data; goto SendReadToCart;
+                    case PPUSCROLL: data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case PPUADDR:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] PPUDATA read not implemented");
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
                         Quit = true;
@@ -837,7 +851,7 @@ internal static class System {
                     switch (Address & 0x2007) {
                         case PPUCTRL:   PPU.Registers.W2000_PPUCRTL(); goto SendReadToCart;
                         case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
-                        case PPUSTATUS: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUSTATUS: goto SendReadToCart; // read-only, writes ignored
                         case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
                         case OAMDATA:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
                         case PPUSCROLL: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
@@ -899,12 +913,11 @@ internal static class System {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Pull() {
             ref var s = ref Register.S;
+            s++;
             ADL = s;
             ADH = 0x01;
             DriveAddressPins();
-            
             CPU_Read();
-            s++;;
         }
 
         internal static byte[] SystemRAM = new byte[0x800];
@@ -931,6 +944,7 @@ internal static class System {
 
         Reset    = true;
         OpHandle = StepReset;
+        PPU.warmupFramesRemaining = 2;
 
         const double fps = 60.0988d;
         var frameTimeSeconds = 1.0 / fps;
@@ -1045,10 +1059,15 @@ internal static class System {
             }
             
             if (NMIAsserted) {
-                NMIAsserted = false;
-                Vector      = Vectors.NMI;
-                OpHandle    = Interrupt;
-                goto HandleInstruction;
+                if (_inNmiHandler) {
+                    NMIAsserted = false; // Suppress re-entrant NMI
+                } else {
+                    _inNmiHandler = true;
+                    NMIAsserted = false;
+                    Vector      = Vectors.NMI;
+                    OpHandle    = Interrupt;
+                    goto HandleInstruction;
+                }
             }
 
             if (CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag) {
@@ -1100,8 +1119,8 @@ internal static class System {
                 break;
             
             case 1:
-                ADL = 0x01;
-                ADH = Register.S;
+                ADH = 0x01;
+                ADL = Register.S;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 Register.S--;
@@ -1116,8 +1135,8 @@ internal static class System {
                 break;
             
             case 3:
-                ADL = 0x01;
-                ADH = Register.S;
+                ADH = 0x01;
+                ADL = Register.S;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 Register.S--;
@@ -1207,6 +1226,7 @@ internal static class System {
     internal static ushort Vector;
     internal static bool   CPU_IRQ;
     internal static bool   NMIAsserted;
+    internal static bool   _inNmiHandler;
     private static  bool   Reset;
     
     internal static Action OpHandle;

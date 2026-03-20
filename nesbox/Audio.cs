@@ -1,13 +1,29 @@
 using SDL3;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace nesbox;
 
 internal static class Audio {
     private static nint _stream;
 
-    // 2 frames of float32 mono at 48 kHz: 800 samples × 4 bytes × 2
-    private const int TargetQueueBytes = 6_400;
+    // Allow up to 4 frames of latency (800 samples × 4 bytes × 4)
+    private const int MaxQueueBytes = 12_800;
+
+    // First-order high-pass filter (AC coupling), ~20 Hz cutoff at 48 kHz.
+    // Removes DC offset just like the capacitor on real NES hardware.
+    // y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+    private static float _hpfPrevIn;
+    private static float _hpfPrevOut;
+    private const  float HpfAlpha = 0.9974f; // RC/(RC+dt), RC=1/(2*pi*20), dt=1/48000
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static float HighPass(float input) {
+        var output = HpfAlpha * (_hpfPrevOut + input - _hpfPrevIn);
+        _hpfPrevIn  = input;
+        _hpfPrevOut = output;
+        return output;
+    }
 
     internal static void Initialize() {
         SDL.Init(SDL.InitFlags.Audio);
@@ -37,8 +53,14 @@ internal static class Audio {
             return;
         }
 
-        if (SDL.GetAudioStreamQueued(_stream) < TargetQueueBytes) {
-            var bytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(buffer)).ToArray();
+        // Apply high-pass filter in-place to remove DC offset
+        var span = CollectionsMarshal.AsSpan(buffer);
+        for (int i = 0; i < span.Length; i++)
+            span[i] = HighPass(span[i]);
+
+        // Always send audio unless queue is severely backed up
+        if (SDL.GetAudioStreamQueued(_stream) < MaxQueueBytes) {
+            var bytes = MemoryMarshal.AsBytes(span).ToArray();
             SDL.PutAudioStreamData(_stream, bytes, bytes.Length);
         }
 
