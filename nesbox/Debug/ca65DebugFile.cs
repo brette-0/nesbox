@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -7,7 +6,7 @@ namespace nesbox.Debug;
 
 using SER = StringExpressionEvaluator.StringExpressionEvaluator;
 
-public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryInteger<T> {
+public sealed class Ld65Dbg : API.Debugging.IDebugFile {
 
     // ---------- private interface implementations ----------
 
@@ -39,12 +38,15 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
         internal LineImpl(string fp, int line) { this.fp = fp; this.line = line; }
     }
 
-    // ---------- IDebugFile<T> ----------
+    // ---------- IDebugFile ----------
 
-    IDictionary<T, API.Debugging.ILine> API.Debugging.IDebugFile<T>.Lines => _lines;
-    IReadOnlyList<API.Debugging.ISpan>  API.Debugging.IDebugFile<T>.Spans => _spans;
+    public static API.Debugging.IDebugFile                          Create(string path) {
+        return new Ld65Dbg(path);
+    }
+    IDictionary<nint, API.Debugging.ILine> API.Debugging.IDebugFile.Lines               => _lines;
+    IReadOnlyList<API.Debugging.ISpan>     API.Debugging.IDebugFile.Spans               => _spans;
 
-    private readonly Dictionary<T, API.Debugging.ILine> _lines = [];
+    private readonly Dictionary<nint, API.Debugging.ILine> _lines = [];
     private readonly List<API.Debugging.ISpan>          _spans = [];
 
     // ---------- enums ----------
@@ -305,13 +307,13 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
             if (!segById.TryGetValue(sp.Seg,        out var seg)) continue;
             if (!fileById.TryGetValue(lr.File,       out var f))  continue;
 
-            var romAddr = (T)(object)(int)(seg.Start + sp.Start);
+            var romAddr = (nint)(seg.Start + sp.Start);
             _lines.TryAdd(romAddr, new LineImpl(ResolveSourcePath(f.Name, dbgDir), (int)lr.Line));
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  IDebugFile<T>.EvaluateCondition
+    //  IDebugFile.EvaluateCondition
     //
     //  Pipeline (all ca65-specific syntax is normalised before SER sees the expr):
     //
@@ -327,16 +329,16 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     //  Returns true (fire) on error so breakpoints fail safe.
     // ══════════════════════════════════════════════════════════════════════════
 
-    bool API.Debugging.IDebugFile<T>.EvaluateCondition(
+    bool API.Debugging.IDebugFile.EvaluateCondition(
         string             expression,
-        T                  romAddress,
+        nint               romAddress,
         Func<ushort, byte> cpuRead,
         Func<int,    byte> programRead,
         Func<int,    byte> characterRead,
         Func<string, int?> regRead)
     {
         try {
-            var romAddr = (int)(object)romAddress;
+            var romAddr = (int)romAddress;
 
             // Build the scalar SER symbol dict.
             var symbols = BuildSerSymbols(romAddr, regRead);
@@ -365,22 +367,22 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  IDebugFile<T>.EvaluateExpression
+    //  IDebugFile.EvaluateExpression
     //
     //  Same pipeline as EvaluateCondition but returns the raw integer result
     //  rather than a bool.  Returns null when evaluation fails.
     // ══════════════════════════════════════════════════════════════════════════
 
-    int? API.Debugging.IDebugFile<T>.EvaluateExpression(
+    int? API.Debugging.IDebugFile.EvaluateExpression(
         string             expression,
-        T                  romAddress,
+        nint               romAddress,
         Func<ushort, byte> cpuRead,
         Func<int,    byte> programRead,
         Func<int,    byte> characterRead,
         Func<string, int?> regRead)
     {
         try {
-            var romAddr = (int)(object)romAddress;
+            var romAddr = (int)romAddress;
             var symbols = BuildSerSymbols(romAddr, regRead);
             var processed = Preprocess(expression, symbols, cpuRead, programRead, characterRead);
             if (!SER.TryEvaluate(ref processed, out var result, symbols)) return null;
@@ -428,7 +430,7 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
         ["A", "X", "Y", "S", "SP", "PC", "P", "N", "V", "B", "D", "I", "Z", "C"];
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  IDebugFile<T>.ValidateCondition
+    //  IDebugFile.ValidateCondition
     //
     //  Dry-run: pre-process the expression with a dummy symbol dict (all values
     //  zero) and call SER.TryEvaluate.  Returns false + error message when:
@@ -437,7 +439,7 @@ public sealed class Ld65Dbg<T> : API.Debugging.IDebugFile<T> where T : IBinaryIn
     //    · an exception is thrown during processing
     // ══════════════════════════════════════════════════════════════════════════
 
-    bool API.Debugging.IDebugFile<T>.ValidateCondition(string expression, out string? error) {
+    bool API.Debugging.IDebugFile.ValidateCondition(string expression, out string? error) {
         try {
             // Build a dummy symbol dict: every known name maps to zero.
             var dummy = new Dictionary<string, SER.SerUnion<int>>(

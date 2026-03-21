@@ -1,5 +1,5 @@
 using System.Diagnostics.Contracts;
-using System.Numerics;
+using nesbox.Debug;
 
 namespace nesbox;
 
@@ -9,7 +9,96 @@ using EList;
 /// Contains all methods that may interface components designed by user with the emulator
 /// </summary>
 public static class API {
-    
+
+    public static class Implementation {
+        public ref struct ImplHandshake {
+            internal ICartridge?           cartridge;
+            internal Audio.IEnhancedAudio? audio;
+            internal Func<byte>?           memoryInit;
+        }
+        
+        public static void SetupSimple(ref ImplHandshake handshake) {
+            handshake.audio = new UnenhancedAudio();
+            handshake.memoryInit = () => (byte)Random.Shared.Next();
+        }
+
+        public static void SetupIO<T1, T2>() where T1 : IIO, new() where T2 : IIO, new() {
+            var port1 = default(T1);
+            var port2 = default(T2);
+            Link.Subscribe.ControllerToPort(0, ref port1);
+            Link.Subscribe.ControllerToPort(1, ref port2);
+        }
+
+        public static EList<string> SetupDebug<T>(EList<string> args
+            ) where T : Debugging.IDebugFile {
+            var return_args = new EList<string>();
+
+            Debugging.IDebugFile? dbgFile = null;
+            var                       port = 0;
+            
+            while (args.MoveNext()) {
+                switch (args.Current) {
+                    case "--debugPort":
+                        if (args.MoveNext()) {
+                            if (!int.TryParse(args.Current, out port)) {
+                                Console.WriteLine("[IMPL] Debug port is not integer");
+                                System.Quit = true;
+                            }
+                            if (System.Quit) return return_args;
+                            break;
+                        }
+
+                        Console.WriteLine("[IMPL] No argument supplied for Debugging Port");
+                        System.Quit = true;
+                        break;
+
+                    case "--debugFile":
+                        if (args.MoveNext()) {
+                            dbgFile = T.Create(args.Current);
+                            Debugger.SourceRoot = Path.GetDirectoryName(
+                                Path.GetFullPath(args.Current)) ?? string.Empty;
+                            if (System.Quit) return return_args;
+                            break;
+                        }
+                    
+                        Console.WriteLine("[IMPL] No argument supplied for Debug File");
+                        System.Quit = true;
+                        break;
+                
+                    default:
+                        return_args.Add(args.Current);
+                        break;
+                }
+            }
+            
+            switch (dbgFile is null, port is 0) {
+                case (true, false):
+                    Console.WriteLine("[IMPL] No debug file passed, cannot debug");
+                    System.Quit = true;
+                    break;
+            
+                case (false, true):
+                    Console.WriteLine("[IMPL] No debug port passed, cannot debug");
+                    System.Quit = true;
+                    break;
+            
+                case (false, false):
+                    Debugger.BeginDebugging(dbgFile!);
+                    break;
+            }
+
+            return return_args;
+        }
+
+
+
+        private sealed class UnenhancedAudio : Audio.IEnhancedAudio {
+            public float PostProcessSample(float sample) => sample;
+
+            public void Configure(EList<string> args) { }
+        }
+    }
+
     /// <summary>
     /// Type of component that is signalled per PPU dot.
     /// </summary>
@@ -45,7 +134,7 @@ public static class API {
     internal static void GetProgramROM(string fp, ref byte[] ProgramROM) => GetFile(fp, ref ProgramROM, "Program ROM");
     internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
 
-    internal interface IIO {
+    public interface IIO {
         public void OnWrite();
         public byte OnRead();
         public void SetIndex(byte Index);
@@ -116,12 +205,21 @@ public static class API {
 
     }
 
+    public static class Audio {
+        public interface IEnhancedAudio {
+            float PostProcessSample(float sample);
+            void  Configure(EList<string> args);
+        }
+    }
+
     public static class Debugging {
-        public interface IDebugFile<TA> where TA : IBinaryInteger<TA> {
+        public interface IDebugFile {
+            static abstract IDebugFile Create(string path);
+            
             /// <summary>
             /// Lines are a file location with an index within the file, they may point to an address in memory
             /// </summary>
-            IDictionary<TA, ILine> Lines { get; }
+            IDictionary<nint, ILine> Lines { get; }
 
             /// <summary>
             /// Done by offset to span as offset implicit to length hunk with scope for proper symbol resolution
@@ -160,7 +258,7 @@ public static class API {
             ///   false — breakpoint should be skipped (expression evaluated to zero).
             /// </returns>
             bool EvaluateCondition(string     expression,
-                                   TA         romAddress,
+                                   nint       romAddress,
                                    Func<ushort, byte> cpuRead,
                                    Func<int,   byte>  programRead,
                                    Func<int,   byte>  characterRead,
@@ -172,7 +270,7 @@ public static class API {
             /// so register names, symbols, $hex literals and cpu[]/program[]/character[] all work.
             /// </summary>
             int? EvaluateExpression(string     expression,
-                                    TA         romAddress,
+                                    nint       romAddress,
                                     Func<ushort, byte> cpuRead,
                                     Func<int,   byte>  programRead,
                                     Func<int,   byte>  characterRead,
@@ -190,10 +288,7 @@ public static class API {
             /// <returns>true when the expression is syntactically valid; false otherwise.</returns>
             bool ValidateCondition(string expression, out string? error);
         }
-
-
-        // TODO: convert structs to interfaces, we don't want the adaptors to be unable to handle additional information
-
+        
         public interface ISpan {
             public int    Start  { get; set; }
             public int    Length { get; set; }

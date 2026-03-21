@@ -84,11 +84,32 @@ internal static class Program {
         }
 
         isFamicom = _isFamicom is true;
-        
-        Cartridge = Implementation.Initialize(next); if (System.Quit) {
+
+        var binds = new API.Implementation.ImplHandshake();
+
+        Implementation.Initialize(ref binds, next); if (System.Quit) {
             return;
         }
         
+        if (binds.audio is null) {
+            Console.WriteLine("[EMU] No Audio Processor");
+            return; 
+        }
+
+        if (binds.cartridge is null) {
+            Console.WriteLine("[EMU] No Cartridge implementation");
+            return; 
+        }
+        
+        if (binds.memoryInit is null) {
+            Console.WriteLine("[EMU] Memory Init Implementation");
+            return; 
+        }
+        
+        Cartridge      = binds.cartridge;
+        AudioProcessor = binds.audio;
+        _memoryInit    = binds.memoryInit;
+
         switch (Cartridge is API.IFamicomCartridge, isFamicom) {
             case (true, true):
             case (false, false):
@@ -110,6 +131,8 @@ internal static class Program {
         System.Initialize(); if (System.Quit) {
             return;
         }
+
+        System.Memory.Initialize(_memoryInit);
         
         while (!System.Quit) {
             var didWork = Debug.Debugger.PumpAsync().GetAwaiter().GetResult();
@@ -122,11 +145,14 @@ internal static class Program {
         internal static Thread? System;
     }
 
-    internal static API.ICartridge              Cartridge { get; private set; } = null!;
-    internal static API.IIO?                    Controller1;
-    internal static API.IIO?                    Controller2;
-    internal static bool                        isFamicom;
-    
+    internal static float                    AudioVolume = 1f;
+    internal static API.Audio.IEnhancedAudio AudioProcessor { get; private set; } = null!;
+    internal static API.ICartridge           Cartridge      { get; private set; } = null!;
+    internal static API.IIO?                 Controller1;
+    internal static API.IIO?                 Controller2;
+    internal static bool                     isFamicom;
+    private static  Func<byte>               _memoryInit     = null!;
+
     internal static class Config {
         internal static bool Strict;
     }

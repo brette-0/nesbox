@@ -114,7 +114,7 @@ public static class Debugger {
     // EvalCondition — thin wrapper that delegates to IDebugFile.
     // Returns true (fire breakpoint) on any error so we fail safe.
     // -----------------------------------------------------------------------
-    private static bool EvalCondition(string expr, int romAddress) {
+    private static bool EvalCondition(string expr, nint romAddress) {
         if (_debugFile is null) return true;
         return _debugFile.EvaluateCondition(
             expr,
@@ -128,7 +128,7 @@ public static class Debugger {
     // -----------------------------------------------------------------------
     // BeginDebugging — blocks until configurationDone.
     // -----------------------------------------------------------------------
-    internal static void BeginDebugging(API.Debugging.IDebugFile<int> debugFile) {
+    internal static void BeginDebugging(API.Debugging.IDebugFile debugFile) {
         _debugFile = debugFile;
 
         foreach (var kv in debugFile.Lines)
@@ -844,11 +844,11 @@ public static class Debugger {
 
     private static          List<(int pos, string? expr)?>         BreakPoints          = [];
     private static readonly object                                  _breakPointLock      = new();
-    private static readonly Dictionary<int, SourceAddress>         SourceCodeReferences = [];
+    private static readonly Dictionary<nint, SourceAddress>        SourceCodeReferences = [];
     private static readonly Dictionary<string, string>             _idePaths            = [];
     private static          int                                     _lastLineNumber;
     private static          int                                     _currentLineNumber;
-    private static          int                                     _currentRomAddress;
+    private static          nint                                    _currentRomAddress;
     private static          byte                                    _lastSp;
 
     private static TcpListener?     _listener;
@@ -856,7 +856,7 @@ public static class Debugger {
     private static NetworkStream?   _stream;
     private static int              _seq;
 
-    internal static API.Debugging.IDebugFile<int>? _debugFile;
+    internal static API.Debugging.IDebugFile? _debugFile;
     internal static bool                            debugging;
     // Directory containing the .dbg file — used to resolve relative source paths.
     internal static string                          SourceRoot = string.Empty;

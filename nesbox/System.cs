@@ -788,6 +788,12 @@ internal static class System {
         private const ushort IODEVICE2        = 0x4017;
         private const ushort FRAMECOUNTER     = 0x4017;
 
+        internal static void Initialize(Func<byte> sharedBehavior) {
+            for (var l = 0; l < SystemRAM.Length; l++) {
+                SystemRAM[l] = sharedBehavior();
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void CPU_Read() => Read(Address, out Data);
 
@@ -980,8 +986,9 @@ internal static class System {
                 }
 
                 if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
-                    untilNextSample += 1d / SamplingFrequency;
-                    SampleBuffer.Add(APU.GetPCMSample());
+                    untilNextSample  += 1d / SamplingFrequency;
+                    SampleBuffer.Add(Program.AudioVolume * 
+                                     Program.AudioProcessor.PostProcessSample(APU.GetPCMSample()));
                 }
             }
 
@@ -1039,7 +1046,9 @@ internal static class System {
                 var now = Stopwatch.GetTimestamp();
                 if (nextPrint == 0) nextPrint = now + freq;
                 if (now >= nextPrint) {
+                    #if DEBUG
                     Console.WriteLine($"[CPU] thr={Throttle:0.###} fps={frames:0} late={lateFrames} worstLateMs={worstLateMs:0.###}");
+                    #endif
                     frames = 0;
                     lateFrames = 0;
                     worstLateMs = 0;
