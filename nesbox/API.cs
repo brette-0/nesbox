@@ -1,5 +1,7 @@
 using System.Diagnostics.Contracts;
+using System.Runtime.CompilerServices;
 using nesbox.Debug;
+using SDL3;
 
 namespace nesbox;
 
@@ -9,17 +11,29 @@ using EList;
 /// Contains all methods that may interface components designed by user with the emulator
 /// </summary>
 public static class API {
-
+    public static class Graphics {
+        public interface Shader {
+            internal SDL3.SDL.Color Recolour(SDL3.SDL.Color c);    
+        }
+    }
     public static class Implementation {
         public ref struct ImplHandshake {
             internal ICartridge?           cartridge;
             internal Audio.IEnhancedAudio? audio;
             internal Func<byte>?           memoryInit;
+            internal Graphics.Shader?      shader;
+        }
+
+        private sealed class NoShader : Graphics.Shader {
+            [Pure]
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public SDL.Color Recolour(SDL.Color c) => c;
         }
         
         public static void SetupSimple(ref ImplHandshake handshake) {
             handshake.audio = new UnenhancedAudio();
             handshake.memoryInit = () => (byte)Random.Shared.Next();
+            handshake.shader = new NoShader();
         }
 
         public static void SetupIO<T1, T2>() where T1 : IIO, new() where T2 : IIO, new() {
@@ -29,9 +43,9 @@ public static class API {
             Link.Subscribe.ControllerToPort(1, ref port2);
         }
 
-        public static EList<string> SetupDebug<T>(EList<string> args
+        public static void SetupDebug<T>(ref EList<string> args
             ) where T : Debugging.IDebugFile {
-            var return_args = new EList<string>();
+            var returnArgs = new EList<string>();
 
             Debugging.IDebugFile? dbgFile = null;
             var                       port = 0;
@@ -44,8 +58,8 @@ public static class API {
                                 Console.WriteLine("[IMPL] Debug port is not integer");
                                 System.Quit = true;
                             }
-                            if (System.Quit) return return_args;
-                            break;
+                            if (System.Quit) return;
+                                   Console.WriteLine("[IMPL] Setting up Init"); break;
                         }
 
                         Console.WriteLine("[IMPL] No argument supplied for Debugging Port");
@@ -57,7 +71,7 @@ public static class API {
                             dbgFile = T.Create(args.Current);
                             Debugger.SourceRoot = Path.GetDirectoryName(
                                 Path.GetFullPath(args.Current)) ?? string.Empty;
-                            if (System.Quit) return return_args;
+                            if (System.Quit) return;
                             break;
                         }
                     
@@ -66,10 +80,12 @@ public static class API {
                         break;
                 
                     default:
-                        return_args.Add(args.Current);
+                        returnArgs.Add(args.Current);
                         break;
                 }
             }
+
+            args = returnArgs;
             
             switch (dbgFile is null, port is 0) {
                 case (true, false):
@@ -86,14 +102,28 @@ public static class API {
                     Debugger.BeginDebugging(dbgFile!);
                     break;
             }
-
-            return return_args;
         }
 
 
 
         private sealed class UnenhancedAudio : Audio.IEnhancedAudio {
-            public float PostProcessSample(float sample) => sample;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public byte ProcessPulse1Level  (byte   level  ) => level;
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public byte ProcessPulse2Level  (byte   level  ) => level;
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public byte ProcessTriangleLevel(byte    level ) => level;
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public byte ProcessNoiseLevel   (byte    level ) => level;
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public byte ProcessPCMLevel     (byte    level ) => level;
+            
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public float PostProcessSample  (float   sample) => sample;
 
             public void Configure(EList<string> args) { }
         }
@@ -174,6 +204,8 @@ public static class API {
         /// <returns></returns>
         [Pure] public byte CPUReadByte();
         
+        [Pure] public byte PPUReadByte();
+        
         [Pure] public byte ReadByte(ushort address);
 
         /// <summary>
@@ -185,6 +217,8 @@ public static class API {
         
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
+
+        public bool PPUA10_11(bool a10, bool a11);
     }
 
     internal interface IFamicomCartridge : ICartridge {
@@ -207,6 +241,12 @@ public static class API {
 
     public static class Audio {
         public interface IEnhancedAudio {
+            byte ProcessPulse1Level(byte level);
+            byte ProcessPulse2Level(byte level);
+            byte ProcessTriangleLevel(byte level);
+            byte ProcessNoiseLevel(byte level);
+            byte ProcessPCMLevel(byte level);
+
             float PostProcessSample(float sample);
             void  Configure(EList<string> args);
         }

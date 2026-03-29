@@ -10,17 +10,82 @@ internal static class System {
         private const ulong DOTS_PER_SCANLINE = 341;
         private const ulong VBLANK_SET_DOT    = 241 * DOTS_PER_SCANLINE + 1; // 82182
         private const ulong VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
-
-
+        
         // NTSC PPU suppresses VBlank for ~29658 CPU cycles after reset.
         // 29658 CPU cycles × 3 PPU dots/cycle = 88974 PPU dots.
         // First VBLANK_SET_DOT at dot 82182 is suppressed (82182 < 88974).
         // Second VBLANK_SET_DOT at dot 171524 goes through (171524 > 88974).
         internal const ulong  WARMUP_DOTS = 29658 * 3; // 88974
         internal static ulong warmupEndDot;
-
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Step() {
+            switch (scanline) {
+                case < 240:
+                    if (virtualTime % DOTS_PER_FRAME is 0) {
+                        // idle cycle
+                    } else if (virtualTime % DOTS_PER_SCANLINE < 257) {
+                        switch ((virtualTime - 1) % 4) {
+                            case 0:
+                                break;  // nt get
+                    
+                            case 1:
+                                break;  // at get
+                    
+                            case 2:
+                                break;  // pt lo get
+                    
+                            case 3:
+                                break;  // pt hi get
+                        }
+                    } else if (virtualTime % DOTS_PER_SCANLINE < 321) {
+                        switch ((virtualTime - 1) % 4) {
+                            case 0:
+                                break;  // waste nt get
+                    
+                            case 1:
+                                break;  // waste at get
+                    
+                            case 2:
+                                break;  // pt lo get
+                    
+                            case 3:
+                                break;  // pt hi get
+                        }
+                    } else if (virtualTime % DOTS_PER_SCANLINE < 337) {
+                        switch ((virtualTime - 1) % 4) {
+                            case 0:
+                                break;  // next nt get
+                    
+                            case 1:
+                                break;  // next at get
+                    
+                            case 2:
+                                break;  // next pt lo get
+                    
+                            case 3:
+                                break;  // next pt hi get
+                        }
+                    } else {
+                        switch ((virtualTime - 1) % 2) {
+                            case 0:
+                                break;  // some nt get
+                    
+                            case 1:
+                                break;  // some nt get
+                        }
+                    }
+                    break;
+                
+                case 240:
+                    // idle work
+                    break;
+                
+                default:
+                    // vblank lines
+                    break;
+            }
+            
             switch (virtualTime % DOTS_PER_FRAME) {
                 case VBLANK_SET_DOT:
                     if (virtualTime < warmupEndDot) break;
@@ -46,7 +111,74 @@ internal static class System {
             nmiLine = newLine;
         }
 
+        internal static void PowerOn() {
+            Reset();
+            
+            // override with non-unified behavior between reset and power on states
+        }
+
+        /// <summary>
+        /// Executed on 'Reset'
+        /// </summary>
+        internal static void Reset() {
+            
+        }
+
+        internal static byte[]   VRAM              = new byte[0x800];
+        internal static ushort   tempVRAMAddr      = 0;
+        internal static bool     latch             = false;
+        internal static byte[,,] PaletteRAM        = new byte[2, 4, 3];
+        internal static byte     backGroundPalette = 0;
+        private const   int      PPUFRAMELENGTH    = 89342;
+
         internal static class Registers {
+            internal static ushort Address = 0;
+            internal static byte   PPUDATA = 0;
+            
+            private static  bool   isEvenFrame;
+
+            internal static void W2007_PPUDATA() {
+                switch (Address) {
+                    case < 0x2000:
+                        // pt
+                        break;
+                    
+                    case < 0x3000:
+                        var line = (Address - 0x2000) & 0x3ff;
+                        line |= Program.Cartridge.PPUA10_11(
+                            (Address & 0x400) is 0x400, (Address & 0x800) is 0x800
+                        ) ? 0x400 : 0;
+                        VRAM[line & 0x7ff] =  Data;
+                        break;
+
+                    case < 0x3f00:
+                        // unused
+                        break;
+                    
+                    default:
+                        if ((Address & 3) is 0) {
+                            backGroundPalette = Data;
+                            break;
+                        }
+
+                        PaletteRAM[(Address & 0x10) >> 8, (Address & 0x0c) >> 2, Address & 0x03] = Data;
+                        break;
+                }
+            }
+
+            internal static void W2006_PPUADDR() {
+                if (latch) {
+                    tempVRAMAddr |= System.Data;
+                    latch        =  true;
+                    Address      =  tempVRAMAddr;
+                    return;
+                }
+                
+                tempVRAMAddr = (ushort)((System.Data & 0x3f) << 8);
+                latch        = true;
+            }
+            
+            
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2000_PPUCRTL() {
                 NMIEnabled = (Data & 0x80) is 0x80;
@@ -112,6 +244,20 @@ internal static class System {
             }
         }
         
+        private static byte[] spritelowBitPlaneRowSwap  = new byte[8];
+        private static byte[] spritehighBitPlaneRowSwap = new byte[8];
+
+        private static byte   lowBitPlaneRow;
+        private static byte   highBitPlaneRow;
+        private static byte   attributeTableValue;
+        private static byte   patternTableValue;
+        private static byte   lowBitPlaneRowSwap;
+        private static byte   highBitPlaneRowSwap;
+        private static byte   attributeTableValueSwap;
+        private static byte   patternTableValueSwap;
+        
+        private static ushort scanline;
+        
         private static bool dmaAlign;
         private static byte dmaLatch;
         private static byte dmaPage;
@@ -130,11 +276,11 @@ internal static class System {
     
     internal static class APU {
         internal static /* pcm */ float GetPCMSample() {
-            var p1 = Pulse1.GetLevel();
-            var p2 = Pulse2.GetLevel();
-            var t  = Triangle.GetLevel();
-            var n  = Noise.GetLevel();
-            var p  = PCM.GetLevel();
+            var p1 = Program.AudioProcessor.ProcessPulse1Level(Pulse1.GetLevel());
+            var p2 = Program.AudioProcessor.ProcessPulse2Level(Pulse2.GetLevel());
+            var t  = Program.AudioProcessor.ProcessTriangleLevel(Triangle.GetLevel());
+            var n  = Program.AudioProcessor.ProcessNoiseLevel(Noise.GetLevel());
+            var p  = Program.AudioProcessor.ProcessPCMLevel(PCM.GetLevel());
 
             var pulseSum = p1 + p2;
             var pulseOut = pulseSum > 0 ? 95.88f          / (8128f / pulseSum                              + 100f) : 0f;
@@ -272,9 +418,7 @@ internal static class System {
                 DMC_IRQ_Enabled = (Data       & 0x80) is 0x80;
                 Loop            = (Data       & 0x40) is 0x40;
                 rateIndex       = (byte)(Data & 0x0f);
-                if (DMC_IRQ_Enabled) {
-                    // Supress IRQ
-                }
+                if (!DMC_IRQ_Enabled) IRQFlag = false;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -715,18 +859,18 @@ internal static class System {
             }
 
             internal static void R4015_Status() {
-                FrameIRQAsserted = false;
-                PCM.IRQFlag      = false;
-                var resp = (byte)(Data & 0xe0); // preserve open bus TODO: make more accurate much later
+                var resp = (byte)(Data & 0x20); // preserve open bus bit 5 only
                 
-                resp |= (byte)(Pulse1.Length   is not 0 ? 0x01 : 0);
-                resp |= (byte)(Pulse2.Length   is not 0 ? 0x02 : 0);
-                resp |= (byte)(Triangle.Length is not 0 ? 0x04 : 0);
-                resp |= (byte)(Noise.Length    is not 0 ? 0x08 : 0);
-                resp |= (byte)(PCM.bytesRemaining   > 0 ? 0x10 : 0);
-                resp |= (byte)(IRQInhibit               ? 0x40 : 0);
-                resp |= (byte)(PCM.DMC_IRQ_Enabled      ? 0x80 : 0);
+                resp |= (byte)(Pulse1.Length      is not 0 ? 0x01 : 0);
+                resp |= (byte)(Pulse2.Length      is not 0 ? 0x02 : 0);
+                resp |= (byte)(Triangle.Length    is not 0 ? 0x04 : 0);
+                resp |= (byte)(Noise.Length       is not 0 ? 0x08 : 0);
+                resp |= (byte)(PCM.bytesRemaining      > 0 ? 0x10 : 0);
+                resp |= (byte)(FrameIRQAsserted            ? 0x40 : 0); // bit 6: frame IRQ pending
+                resp |= (byte)(PCM.IRQFlag                 ? 0x80 : 0); // bit 7: DMC IRQ pending
                 Data =  resp;
+
+                FrameIRQAsserted = false; // reading $4015 acknowledges frame IRQ only
             }
 
             internal static void W4017_FrameCounter() {
@@ -1082,7 +1226,6 @@ internal static class System {
                 
                 Vector     = Vectors.IRQ;
                 OpHandle   = Interrupt;
-                Register.i = true;          // set interrupt mask (we are in an interrupt)
                 goto HandleInstruction;
             }
             

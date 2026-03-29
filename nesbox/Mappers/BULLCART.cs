@@ -1,11 +1,8 @@
-﻿using EList;
+﻿using System.Diagnostics.Contracts;
+using System.Runtime.CompilerServices;
+using EList;
 using nesbox;
 namespace nesbox.Mappers;
-
-internal enum NameTableArrangements : byte {
-    Vertical,
-    Horizontal
-}
 
 internal sealed class BULLCART : API.IFamicomCartridge {
     public BULLCART(ref EList<string> args) {
@@ -47,14 +44,6 @@ internal sealed class BULLCART : API.IFamicomCartridge {
                     }
                     break;
                 
-                case "--vertical":
-                    NameTableArrangement = NameTableArrangements.Vertical;
-                    break;
-                
-                case "--horizontal":
-                    NameTableArrangement = NameTableArrangements.Horizontal;
-                    break;
-                
                 default:
                     next.Add(args.Current);
                     break;
@@ -92,8 +81,15 @@ internal sealed class BULLCART : API.IFamicomCartridge {
             return;
         }
 
-        if (ProgramROM.Length < 0x8000) CPUReadByteTask = (self)          => self.SmallProgramCPUReadByte();
-        if (ProgramROM.Length < 0x8000) ReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
+        if (ProgramROM.Length < 0x8000) {
+            CPUProgramReadByteTask = self            => self.SmallProgramCPUReadByte();
+            ProgramReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
+        } 
+        
+        if (CharacterROM.Length < 0x8000) {
+            PPUCharacterReadByteTask = self            => self.SmallProgramCPUReadByte();
+            CharacterReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
+        }
 
         args = next;
     }
@@ -101,19 +97,20 @@ internal sealed class BULLCART : API.IFamicomCartridge {
     public void ProgramRead(ushort address) { }
     public void CPUWrite() { }
     
-    public void PPURead() {
-        throw new NotImplementedException();
-    }
+    public void PPURead() { }
+
     public void PPUWrite() {
         throw new NotImplementedException();
     }
 
-    public byte ReadByte(ushort       address) => ReadByteTask(this, address);
+    public byte ReadByte(ushort       address) => ProgramReadByteTask(this, address);
     public int  GetROMLocation(ushort address) => address;
-    public byte CPUReadByte()                  => CPUReadByteTask(this);
+    public byte CPUReadByte()                  => CPUProgramReadByteTask(this);
+    public byte PPUReadByte()                  => PPUCharacterReadByteTask(this);
 
-    public byte[] ProgramROM                    { get => __ProgramROM;   set => __ProgramROM = value; }
-    public byte[] CharacterROM                  { get => __CharacterROM; set => __CharacterROM = value ; }
+    public byte[] ProgramROM                           { get => __ProgramROM;   set => __ProgramROM = value; }
+    public byte[] CharacterROM                         { get => __CharacterROM; set => __CharacterROM = value ; }
+    public bool   PPUA10_11(bool a10, bool _) => a10;
     public float  ModifyAPUSignal(float signal) => signal;
 
     public bool  EXPO                          { get; set; }
@@ -131,29 +128,57 @@ internal sealed class BULLCART : API.IFamicomCartridge {
     private byte[] __CharacterROM = [];
 
     #region CPUReadByte
-    private Func<BULLCART, byte> CPUReadByteTask      = (self)          => self.StandardProgramCPUReadByte();
-    private Func<BULLCART, ushort, byte> ReadByteTask = (self, address) => self.StandardProgramReadByte(address);
+    private Func<BULLCART, byte>         CPUProgramReadByteTask   = self            => self.StandardProgramCPUReadByte();
+    private Func<BULLCART, ushort, byte> ProgramReadByteTask      = (self, address) => self.StandardProgramReadByte(address);
+    private Func<BULLCART, byte>         PPUCharacterReadByteTask = self            => self.StandardCharacterPPUReadByte();
+    private Func<BULLCART, ushort, byte> CharacterReadByteTask    = (self, address) => self.StandardCharacterReadByte(address);
     
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte SmallProgramCPUReadByte() => System.Address switch {
         < 0x8000                           => (byte)(System.Address >> 8),
         _                                  => ProgramROM[System.Address & (ProgramROM.Length - 1)]
     };
     
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte StandardProgramCPUReadByte() => System.Address switch {
         < 0x8000 => (byte)(System.Address >> 8),
-        _        => ProgramROM[System.Address]
+        _        => ProgramROM[System.Address - 0x8000]
     };
     
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private byte SmallCharacterPPUReadByte() => System.PPU.Registers.Address switch {
+        < 0x8000 => CharacterROM[System.PPU.Registers.Address & (CharacterROM.Length - 1)],
+        _        => throw new ArgumentOutOfRangeException()
+    };
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private byte StandardCharacterPPUReadByte() => System.PPU.Registers.Address switch {
+        < 0x8000 => CharacterROM[System.PPU.Registers.Address],
+        _        => throw new ArgumentOutOfRangeException()
+    };
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte SmallProgramReadByte(ushort address) => address switch {
         < 0x8000 => (byte)(address >> 8),
         _        => ProgramROM[address & (ProgramROM.Length - 1)]
     };
     
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte StandardProgramReadByte(ushort address) => address switch {
         < 0x8000 => (byte)(address >> 8),
-        _        => ProgramROM[address]
+        _        => ProgramROM[address - 0x8000]
+    };
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private byte SmallCharacterReadByte(ushort address) => address switch {
+        < 0x8000 => (byte)(address >> 8),
+        _        => CharacterROM[address & (CharacterROM.Length - 1)]
+    };
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private byte StandardCharacterReadByte(ushort address) => address switch {
+        < 0x8000 => (byte)(address >> 8),
+        _        => CharacterROM[address - 0x8000]
     };
     #endregion CPUReadByte
-    
-    private NameTableArrangements NameTableArrangement;
 }

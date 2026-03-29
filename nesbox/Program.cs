@@ -102,13 +102,21 @@ internal static class Program {
         }
         
         if (binds.memoryInit is null) {
-            Console.WriteLine("[EMU] Memory Init Implementation");
+            Console.WriteLine("[EMU] No Memory Init Implementation");
             return; 
         }
+        
+        if (binds.shader is null) {
+            Console.WriteLine("[EMU] No Shader Implementation");
+            return; 
+        }
+        
+        Console.WriteLine("[EMU] Implementation Handshake Complete");
         
         Cartridge      = binds.cartridge;
         AudioProcessor = binds.audio;
         _memoryInit    = binds.memoryInit;
+        _shader        = binds.shader;
 
         switch (Cartridge is API.IFamicomCartridge, isFamicom) {
             case (true, true):
@@ -151,7 +159,8 @@ internal static class Program {
     internal static API.IIO?                 Controller1;
     internal static API.IIO?                 Controller2;
     internal static bool                     isFamicom;
-    private static  Func<byte>               _memoryInit     = null!;
+    private static  Func<byte>               _memoryInit = null!;
+    private static  API.Graphics.Shader      _shader     = null!;
 
     internal static class Config {
         internal static bool Strict;
