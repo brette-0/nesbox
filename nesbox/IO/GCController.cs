@@ -1,13 +1,13 @@
-﻿using System.Numerics;
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using SDL3;
 
 namespace nesbox.IO;
 
 /*
- *  This is a WIP controller idea, do not use it it doesn't work unless your the guy working with me on it
+ *  This is a WIP controller idea. Do not use it, it doesn't work unless you're the guy working with me on it
  */
 
+// ReSharper disable once InconsistentNaming
 internal sealed class GCController : API.IIO, API.IClockDriven {
     public GCController() {
         Link.Subscribe.OnTick(this);
@@ -16,10 +16,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
     public void OnWrite() {
         if (_taskLatch) {
             switch (_modeSelect) {
-                case ModeSelect.ID:
-                    break;
-                
-                case ModeSelect.REPORT:
+                case ModeSelect.Report:
                     // poll bits into wide
                     if (!_pollReady) return;
                     _pollReady   = false;
@@ -27,7 +24,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
  
                     return;
 
-                case ModeSelect.BEHAVIOR:
+                case ModeSelect.Behavior:
                     _pollingModeBuffer <<= 1;
                     _pollingModeBuffer |=  1;
                     if (--_taskLength is not 0) return;
@@ -35,7 +32,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     _taskLatch   = false;
                     return;
 
-                case ModeSelect.SKIP:
+                case ModeSelect.Skip:
                     _pollingMaskBuffer <<= 1;
                     _pollingMaskBuffer |=  1;
                     _nInputs++;
@@ -44,10 +41,10 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     _taskLatch   = false;
                     return;
 
-                case ModeSelect.RUMBLE:
+                case ModeSelect.Rumble:
                     break;
 
-                case ModeSelect.INVERT:
+                case ModeSelect.Invert:
                     _flipBuffer <<= 1;
                     _flipBuffer |=  1;
                     if (--_taskLength is not 0) return;
@@ -55,48 +52,43 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     _taskLatch = false;
                     return;
 
+                case ModeSelect.End:
                 default:
                     throw new ArgumentOutOfRangeException();
             }
         } else {
             _taskLatch = true;
             switch (_modeSelect) {
-                case ModeSelect.ID:
-                    return;
-                
-                case ModeSelect.REPORT:
+                case ModeSelect.Report:
                     _taskLength = _nInputs;
                     return;
 
-                case ModeSelect.BEHAVIOR:
+                case ModeSelect.Behavior:
                     _taskLength = 8;
                     return;
 
-                case ModeSelect.SKIP:
+                case ModeSelect.Skip:
                     _taskLength = 61;
                     _nInputs    = 0;
                     return;
 
-                case ModeSelect.RUMBLE:
+                case ModeSelect.Rumble:
                     return;
 
-                case ModeSelect.INVERT:
+                case ModeSelect.Invert:
                     _taskLength = _nInputs;
                     return;
-                
+
+                case ModeSelect.End:
                 default:
                     throw new ArgumentOutOfRangeException();
             }
         }
-        throw new NotImplementedException();
     }
     public byte OnRead() {
         if (_taskLatch) {
             switch (_modeSelect) {
-                case ModeSelect.ID:
-                    return 0;
-                
-                case ModeSelect.REPORT:
+                case ModeSelect.Report:
                     if (!_pollReady) return 0;
                     
                     _inputs >>= 1;
@@ -107,51 +99,50 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     return (byte)(_inputs & 1);
                 
 
-                case ModeSelect.BEHAVIOR:
+                case ModeSelect.Behavior:
                     _pollingModeBuffer <<= 1;
                     if (--_taskLength is not 0) return 0;
                     _pollingMode = (PollingMode)_pollingModeBuffer;
                     _taskLatch   = false;
                     return 0;
 
-                case ModeSelect.SKIP:
+                case ModeSelect.Skip:
                     _pollingMaskBuffer <<= 1;
                     if (--_taskLength is not 0) return 0;
                     _pollingMask = _pollingMaskBuffer;
                     _taskLatch   = false;
                     return 0;
 
-                case ModeSelect.RUMBLE:
+                case ModeSelect.Rumble:
                     return 0;
 
-                case ModeSelect.INVERT:
+                case ModeSelect.Invert:
                     _flipBuffer <<= 1;
                     if (--_taskLength is not 0) return 0;
                     _flip      = _flipBuffer;
                     _taskLatch = false;
                     return 0;
-                
+
+                case ModeSelect.End:
                 default:
                     throw new ArgumentOutOfRangeException();
             }
         }
 
-        _modeSelect = (ModeSelect)((int)++_modeSelect % (int)ModeSelect.END);
-        
-        throw new NotImplementedException();
+        _modeSelect = (ModeSelect)((int)++_modeSelect % (int)ModeSelect.End);
+        return 0;
     }
     
-    public void SetIndex(byte Index) => _port = Index;
+    public void SetIndex(byte index) => _port = index;
 
     private enum ModeSelect : byte {
-        REPORT,
-        ID,
-        BEHAVIOR,
-        SKIP,
-        RUMBLE,
-        INVERT,
+        Report,
+        Behavior,
+        Skip,
+        Rumble,
+        Invert,
         
-        END,
+        End,
     }
     
     [Flags]
