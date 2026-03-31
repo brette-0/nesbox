@@ -18,8 +18,8 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             switch (_modeSelect) {
                 case ModeSelect.Report:
                     // poll bits into wide
-                    if (!_pollReady) return;
-                    _pollReady   = false;
+                    if (_pollReady is PollingStatus.Requested) return;
+                    _pollReady   = PollingStatus.Requested;
                     _delayCycles = 32_214;
  
                     return;
@@ -89,9 +89,9 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
         if (_taskLatch) {
             switch (_modeSelect) {
                 case ModeSelect.Report:
-                    if (!_pollReady) return 0;
+                    if (_pollReady is not PollingStatus.Ready) return 0;
                     
-                    _inputs >>= 1;
+                    _shift >>= 1;
                     if (--_taskLength is 0) {
                         _taskLatch   = false;
                     }
@@ -171,20 +171,26 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
     private byte        _port;
     
     // adaptor => controller
-    private bool   _pollReady;
+    private PollingStatus   _pollReady;
     private ushort _delayCycles;
     private ulong  _shift;
-    private byte   _readCount;
+
+    private enum PollingStatus {
+        Requested,
+        Working,
+        Ready
+    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public  void        OnTick() {
-        if (_pollReady) return;
+        if (_pollReady is not PollingStatus.Requested) return;
         if (--_delayCycles != 0) return;
+        _pollReady = PollingStatus.Working;
 
         ulong report = 0;
         
         var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
-        if (gp is 0) { _shift = 0; _readCount = 0; return; }
+        if (gp is 0) { _shift = 0; _taskLength = 0; return; }
         
         if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))                 _shift |= 0x001; // B
         if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))                  _shift |= 0x002; // Y
@@ -254,7 +260,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
         _inputs ^= _flip;
                     
         // ready for reading
-        _pollReady = true;
+        _pollReady = PollingStatus.Ready;
 
         // ReSharper disable once SeparateLocalFunctionsWithJumpStatement
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
