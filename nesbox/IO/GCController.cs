@@ -225,9 +225,9 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
         }
         
         if (_pollingMode.HasFlag(PollingMode.LPrecalc)) {
-            lx     =  (byte)Math.Atan2(lx, ly);
+            lx     =  (byte)(256 * Math.Atan2(lx, ly));
             _shift |= (ulong)lx << 29;
-            ly     =  (byte)Math.Sqrt(lx * lx + ly * ly);
+            ly     =  (byte)(256 * Math.Sqrt(lx * lx + ly * ly));
             _shift |= (ulong)lx << 37;
         } else {
             _shift |= (ulong)lx << 29;
@@ -236,9 +236,9 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
 
 
         if (_pollingMode.HasFlag(PollingMode.CPrecalc)) {
-            cx     =  (byte)Math.Atan2(cx, cy);
+            cx     =  (byte)(256 * Math.Atan2(cx, cy));
             _shift |= (ulong)cx << 45;
-            cy     =  (byte)Math.Sqrt(cx * cx + cy * cy);
+            cy     =  (byte)(256 * Math.Sqrt(cx * cx + cy * cy));
             _shift |= (ulong)cy << 37;
         } else {
             _shift |= (ulong)cx << 45;
@@ -280,10 +280,10 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                 0b0010 => (0x80, 0xff),
                 0b0100 => (0xc0, 0xff),
                 0b1000 => (0x40, 0xff),
-                0b0101 => (0xe0, Math.Sqrt(2)),
-                0b1001 => (0x20, Math.Sqrt(2)),
-                0b0110 => (0xa0, Math.Sqrt(2)),
-                0b1010 => (0x60, Math.Sqrt(2)),
+                0b0101 => (0xe0, 256 * Math.Sqrt(2)),
+                0b1001 => (0x20, 256 * Math.Sqrt(2)),
+                0b0110 => (0xa0, 256 * Math.Sqrt(2)),
+                0b1010 => (0x60, 256 * Math.Sqrt(2)),
                 _      => throw new ArgumentOutOfRangeException()
             };
 
