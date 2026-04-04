@@ -3,6 +3,8 @@ using System.Runtime.CompilerServices;
 using nesbox.CPU;
 namespace nesbox;
 
+// TODO: convert Memory module IO writes to set an internal state, revise IO response to R/W semantics and remove strobing
+
 internal static class System {
     internal static class PPU {
         // TODO: Add OAM DMA for DMC DMA to interrupt it
@@ -1034,9 +1036,7 @@ internal static class System {
                 case OAMDMA          : PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
                 case CHANNELSTATUS   : APU.Registers.W4015_Status();   goto SendReadToCart;;
                 case IODEVICE1:
-                    if ((Data & 1) is 0) break;
-                    Program.Controller1?.OnWrite();
-                    Program.Controller2?.OnWrite();
+                    IOAssertion = (Data & 1) is 0;
                     break;
                 case FRAMECOUNTER:     APU.Registers.W4017_FrameCounter(); goto SendReadToCart;
                     
@@ -1449,7 +1449,8 @@ internal static class System {
     internal static List<float> SampleBuffer = [];
     internal static APU.PulseChannel Pulse1 = new();
     internal static APU.PulseChannel Pulse2 = new();
-    
+
+    internal static bool IOAssertion;
     // Debug variables
     private static string _mnemonic = string.Empty;
 }

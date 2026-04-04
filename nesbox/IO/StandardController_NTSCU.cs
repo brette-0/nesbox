@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace nesbox.IO;
 
 using SDL3;
@@ -40,11 +42,13 @@ using SDL3;
 //    - TODO: Microphone (Famicom controller 2, bit 2 of $4016).
 // ============================================================================
 
-public class StandardController_NTSCU : API.IIO {
+public class StandardController_NTSCU : API.IO {
     
-    public void SetIndex(byte Index) => _port = Index;
-
-    public void OnWrite() {
+    public override void SetIndex(byte Index) => _port = Index;
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public override void OnTick() {
+        if (!System.IOAssertion) return;
         // Gamepad handles are managed by the Renderer thread via SDL events.
         // We just read button state here — GetGamepadButton is thread-safe.
         var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
@@ -68,8 +72,9 @@ public class StandardController_NTSCU : API.IIO {
 
         _readCount = 0;
     }
+    
 
-    public byte OnRead() {
+    public override byte OnRead() {
         // NTSC NES: after 8 reads, D0 floats high → returns 1.
         // Famicom: after 8 reads, D0 is grounded → returns 0.
         // TODO: check Program.isFamicom for correct post-8 behavior.

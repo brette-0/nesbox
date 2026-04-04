@@ -8,99 +8,27 @@ namespace nesbox.IO;
  */
 
 // ReSharper disable once InconsistentNaming
-internal sealed class GCController : API.IIO, API.IClockDriven {
+internal sealed class GCController : API.IO, API.IClockDriven {
     public GCController() {
         Link.Subscribe.OnTick(this);
     }
     
-    public void OnWrite() {
+    public override byte OnRead() {
         if (_taskLatch) {
             switch (_modeSelect) {
                 case ModeSelect.Report:
-                    // poll bits into wide
-                    if (_pollReady is PollingStatus.Requested) return;
-                    _pollReady   = PollingStatus.Requested;
-                    _delayCycles = 32_214;
- 
-                    return;
-
-                case ModeSelect.Behavior:
-                    _pollingModeBuffer <<= 1;
-                    _pollingModeBuffer |=  1;
-                    if (--_taskLength is not 0) return;
-                    _pollingMode = (PollingMode)_pollingModeBuffer;
-                    _taskLatch   = false;
-                    return;
-
-                case ModeSelect.Skip:
-                    _pollingMaskBuffer <<= 1;
-                    _pollingMaskBuffer |=  1;
-                    _nInputs++;
-                    if (--_taskLength is not 0) return;
-                    _pollingMask = _pollingMaskBuffer;
-                    _taskLatch   = false;
-                    return;
-
-                case ModeSelect.Rumble:
-                    break;
-
-                case ModeSelect.Invert:
-                    _flipBuffer <<= 1;
-                    _flipBuffer |=  1;
-                    if (--_taskLength is not 0) return;
-                    _flip      = _flipBuffer;
-                    _taskLatch = false;
-                    return;
-
-                case ModeSelect.End:
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-        } else {
-            _taskLatch = true;
-            switch (_modeSelect) {
-                case ModeSelect.Report:
-                    _taskLength = _nInputs;
-                    return;
-
-                case ModeSelect.Behavior:
-                    _taskLength = 8;
-                    return;
-
-                case ModeSelect.Skip:
-                    _taskLength = 61;
-                    _nInputs    = 0;
-                    return;
-
-                case ModeSelect.Rumble:
-                    return;
-
-                case ModeSelect.Invert:
-                    _taskLength = _nInputs;
-                    return;
-
-                case ModeSelect.End:
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-        }
-    }
-    public byte OnRead() {
-        if (_taskLatch) {
-            switch (_modeSelect) {
-                case ModeSelect.Report:
-                    if (_pollReady is not PollingStatus.Ready) return 0;
-                    
                     _shift >>= 1;
+                    _shift |= System.IOAssertion ? 0x01 : (ulong)0x00;
                     if (--_taskLength is 0) {
                         _taskLatch   = false;
                     }
                     
-                    return (byte)(_inputs & 1);
+                    return (byte)(_shift & 1);
                 
 
                 case ModeSelect.Behavior:
                     _pollingModeBuffer <<= 1;
+                    _pollingModeBuffer |=  (byte)(System.IOAssertion ? 0x01 : 0x00);
                     if (--_taskLength is not 0) return 0;
                     _pollingMode = (PollingMode)_pollingModeBuffer;
                     _taskLatch   = false;
@@ -108,6 +36,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
 
                 case ModeSelect.Skip:
                     _pollingMaskBuffer <<= 1;
+                    _pollingMaskBuffer |= System.IOAssertion ? 0x01 : (ulong)0x00;
                     if (--_taskLength is not 0) return 0;
                     _pollingMask = _pollingMaskBuffer;
                     _taskLatch   = false;
@@ -129,19 +58,25 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             }
         }
 
-        _modeSelect = (ModeSelect)((int)++_modeSelect % (int)ModeSelect.End);
+        if (System.IOAssertion) {
+            _modeSelect = (ModeSelect)((int)++_modeSelect % (int)ModeSelect.End);
+        } else if (_modeSelect is ModeSelect.Legacy) {
+            // TODO: return bit            
+        }
+        
         return 0;
     }
     
-    public void SetIndex(byte index) => _port = index;
+    public override void SetIndex(byte index) => _port = index;
 
     private enum ModeSelect : byte {
+        Legacy,
         Report,
         Behavior,
         Skip,
         Rumble,
         Invert,
-        
+        LegacySetup,
         End,
     }
     
@@ -157,12 +92,11 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
 
 
     // adaptor => console
-    private int         _flipBuffer;
-    private int         _flip;
+    private ulong       _flipBuffer;
+    private ulong       _flip;
     private byte        _nInputs;           // the amount of bits to report
-    private int         _inputs;            // built result on writing when mode select is report
-    private int         _pollingMaskBuffer; // set when building mask
-    private int         _pollingMask;       // set by completing buffer, fetched when using active
+    private ulong       _pollingMaskBuffer; // set when building mask
+    private ulong       _pollingMask;       // set by completing buffer, fetched when using active
     private byte        _pollingModeBuffer;
     private byte        _taskLength;
     private PollingMode _pollingMode;      // mode of behavior
@@ -171,21 +105,16 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
     private byte        _port;
     
     // adaptor => controller
-    private PollingStatus   _pollReady;
-    private ushort _delayCycles;
     private ulong  _shift;
 
-    private enum PollingStatus {
-        Requested,
-        Working,
-        Ready
-    }
-    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public  void        OnTick() {
-        if (_pollReady is not PollingStatus.Requested) return;
-        if (--_delayCycles != 0) return;
-        _pollReady = PollingStatus.Working;
+    public  override void        OnTick() {
+        if (_modeSelect is ModeSelect.Legacy) {
+            if (System.IOAssertion) {
+                // reset shift position
+                return;
+            }
+        }
 
         ulong report = 0;
         
@@ -210,8 +139,15 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
         _shift |= (uint)(ProcessTrigger(SDL.GamepadAxis.LeftTrigger) << 13);
         _shift |= (uint)(ProcessTrigger(SDL.GamepadAxis.RightTrigger) << 21);
 
-        var (lx, ly) = ProcessStick((SDL.GamepadAxis.LeftX, SDL.GamepadAxis.LeftY));
-        var (cx, cy) = ProcessStick((SDL.GamepadAxis.RightX, SDL.GamepadAxis.RightY));
+        var (lx, ly) =  ProcessStick((SDL.GamepadAxis.LeftX, SDL.GamepadAxis.LeftY));
+        var (cx, cy) =  ProcessStick((SDL.GamepadAxis.RightX, SDL.GamepadAxis.RightY));
+        _shift       |= (ulong)lx << 29;
+        _shift       |= (ulong)ly << 37;
+        _shift       |= (ulong)cx << 45;
+        _shift       |= (ulong)cy << 53;
+        
+        // flip bits
+        _shift ^= _flip;
 
         if (_pollingMode.HasFlag(PollingMode.LtoC) && cx is 0 && cy is 0) {
             (cx, cy) = (lx, ly);
@@ -223,14 +159,11 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             cy is 0) {
             (lx, ly) = (cx, cy);
         }
-        
+
         if (_pollingMode.HasFlag(PollingMode.LPrecalc)) {
             lx     =  (byte)(256 * Math.Atan2(lx, ly));
             _shift |= (ulong)lx << 29;
             ly     =  (byte)(256 * Math.Sqrt(lx * lx + ly * ly));
-            _shift |= (ulong)lx << 37;
-        } else {
-            _shift |= (ulong)lx << 29;
             _shift |= (ulong)ly << 37;
         }
 
@@ -240,28 +173,21 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             _shift |= (ulong)cx << 45;
             cy     =  (byte)(256 * Math.Sqrt(cx * cx + cy * cy));
             _shift |= (ulong)cy << 37;
-        } else {
-            _shift |= (ulong)cx << 45;
-            _shift |= (ulong)cy << 53;
-        }
+        } 
 
         CopyPadToStick(PollingMode.DToL, ref lx, ref ly);
         CopyPadToStick(PollingMode.DToC, ref cx, ref cy);
         
         // copy wanted bits into second by skipping bits clear in mask
-        _inputs = 0;
+        _shift = 0;
         for (var s = 0; s < _nInputs; s++) {
-            if ((_pollingMask & 1 << s) is 0) continue;
-            report  |=  (report   >> s) & 1;
-            _inputs <<= 1;
+            if ((_pollingMask & (ulong)1 << s) is 0) continue;
+            report |=  (report    >> s) & 1;
+            _shift <<= 1;
         }
                     
-        // flip bits
-        _inputs ^= _flip;
-                    
         // ready for reading
-        _pollReady = PollingStatus.Ready;
-
+        
         // ReSharper disable once SeparateLocalFunctionsWithJumpStatement
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void CopyPadToStick(PollingMode stick, ref byte x, ref byte y) {

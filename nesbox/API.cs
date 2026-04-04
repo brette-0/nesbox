@@ -36,7 +36,7 @@ public static class API {
             handshake.shader = new NoShader();
         }
 
-        public static void SetupIO<T1, T2>() where T1 : IIO, new() where T2 : IIO, new() {
+        public static void SetupIO<T1, T2>() where T1 : IO, new() where T2 : IO, new() {
             var port1 = default(T1);
             var port2 = default(T2);
             Link.Subscribe.ControllerToPort(0, ref port1);
@@ -164,10 +164,10 @@ public static class API {
     internal static void GetProgramROM(string fp, ref byte[] ProgramROM) => GetFile(fp, ref ProgramROM, "Program ROM");
     internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
 
-    public interface IIO {
-        public void OnWrite();
-        public byte OnRead();
-        public void SetIndex(byte Index);
+    public abstract class IO : IClockDriven {
+        public abstract byte OnRead();
+        public abstract void SetIndex(byte index);
+        public abstract void OnTick();
     }
 
     public sealed class HasIRQLine {
