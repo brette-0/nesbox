@@ -1036,7 +1036,9 @@ internal static class System {
                 case OAMDMA          : PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
                 case CHANNELSTATUS   : APU.Registers.W4015_Status();   goto SendReadToCart;;
                 case IODEVICE1:
-                    IOAssertion = (Data & 1) is 0;
+                    IOAssertion = (Data & 1) is 1;
+                    Program.Controller1!.OnWrite();
+                    Program.Controller2!.OnWrite();
                     break;
                 case FRAMECOUNTER:     APU.Registers.W4017_FrameCounter(); goto SendReadToCart;
                     

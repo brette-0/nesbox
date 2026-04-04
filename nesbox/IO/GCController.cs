@@ -7,13 +7,15 @@ namespace nesbox.IO;
  *  This is a WIP controller idea. Do not use it, it doesn't work unless you're the guy working with me on it
  */
 
+// TODO: We've been bouncing back between approaches, current approach is going to destroy CPU. Fix needed
+
 // ReSharper disable once InconsistentNaming
-internal sealed class GCController : API.IO, API.IClockDriven {
+internal sealed class GCController : API.IIO, API.IClockDriven {
     public GCController() {
         Link.Subscribe.OnTick(this);
     }
     
-    public override byte OnRead() {
+    public byte OnRead() {
         if (_taskLatch) {
             switch (_modeSelect) {
                 case ModeSelect.Report:
@@ -67,7 +69,10 @@ internal sealed class GCController : API.IO, API.IClockDriven {
         return 0;
     }
     
-    public override void SetIndex(byte index) => _port = index;
+    public void SetIndex(byte index) => _port = index;
+    public void OnWrite() {
+        throw new NotImplementedException();
+    }
 
     private enum ModeSelect : byte {
         Legacy,
@@ -108,7 +113,7 @@ internal sealed class GCController : API.IO, API.IClockDriven {
     private ulong  _shift;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public  override void        OnTick() {
+    public  void        OnTick() {
         if (_modeSelect is ModeSelect.Legacy) {
             if (System.IOAssertion) {
                 // reset shift position

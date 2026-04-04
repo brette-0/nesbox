@@ -156,8 +156,8 @@ internal static class Program {
     internal static float                    AudioVolume = 1f;
     internal static API.Audio.IEnhancedAudio AudioProcessor { get; private set; } = null!;
     internal static API.ICartridge           Cartridge      { get; private set; } = null!;
-    internal static API.IO?                  Controller1;
-    internal static API.IO?                  Controller2;
+    internal static API.IIO?                  Controller1;
+    internal static API.IIO?                  Controller2;
     internal static bool                     isFamicom;
     private static  Func<byte>               _memoryInit = null!;
     private static  API.Graphics.Shader      _shader     = null!;

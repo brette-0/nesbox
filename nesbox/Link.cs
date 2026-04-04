@@ -16,7 +16,7 @@ internal static class Link {
             ClockDrivenImplementations.Add(ctx);
         }
 
-        internal static void ControllerToPort<T>(byte port, ref T? device) where T : API.IO, new() {
+        internal static void ControllerToPort<T>(byte port, ref T? device) where T : API.IIO, new() {
             if (device is not null) {
                 Console.WriteLine("[EMU] [LINK] [IO] Device is already configured and not Subscribable");
                 System.Quit = true;

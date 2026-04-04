@@ -36,11 +36,19 @@ public static class API {
             handshake.shader = new NoShader();
         }
 
-        public static void SetupIO<T1, T2>() where T1 : IO, new() where T2 : IO, new() {
+        public static void SetupIO<T1, T2>() where T1 : IIO, new() where T2 : IIO, new() {
             var port1 = default(T1);
             var port2 = default(T2);
             Link.Subscribe.ControllerToPort(0, ref port1);
             Link.Subscribe.ControllerToPort(1, ref port2);
+            if (port1 is IClockDriven icd1) {
+                Link.Subscribe.OnTick(icd1);
+            }
+
+            if (port2 is IClockDriven icd2) {
+                Link.Subscribe.OnTick(icd2);
+            }
+            
         }
 
         public static void SetupDebug<T>(ref EList<string> args
@@ -164,10 +172,10 @@ public static class API {
     internal static void GetProgramROM(string fp, ref byte[] ProgramROM) => GetFile(fp, ref ProgramROM, "Program ROM");
     internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
 
-    public abstract class IO : IClockDriven {
-        public abstract byte OnRead();
-        public abstract void SetIndex(byte index);
-        public abstract void OnTick();
+    public interface IIO {
+        public byte OnRead();
+        public void SetIndex(byte index);
+        public void OnWrite();
     }
 
     public sealed class HasIRQLine {
