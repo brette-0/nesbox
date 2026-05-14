@@ -40,9 +40,7 @@ public sealed class Ld65Dbg : API.Debugging.IDebugFile {
 
     // ---------- IDebugFile ----------
 
-    public static API.Debugging.IDebugFile                          Create(string path) {
-        return new Ld65Dbg(path);
-    }
+    public static API.Debugging.IDebugFile                          Create(string path) => new Ld65Dbg(path);
     IDictionary<nint, API.Debugging.ILine> API.Debugging.IDebugFile.Lines               => _lines;
     IReadOnlyList<API.Debugging.ISpan>     API.Debugging.IDebugFile.Spans               => _spans;
 

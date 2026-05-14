@@ -22,84 +22,91 @@ internal static class System {
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Step() {
-            switch (scanline) {
-                case < 240:
-                    if (virtualTime % DOTS_PER_FRAME is 0) {
-                        // idle cycle
-                    } else if (virtualTime % DOTS_PER_SCANLINE < 257) {
-                        switch ((virtualTime - 1) % 4) {
-                            case 0:
-                                break;  // nt get
-                    
-                            case 1:
-                                break;  // at get
-                    
-                            case 2:
-                                break;  // pt lo get
-                    
-                            case 3:
-                                break;  // pt hi get
-                        }
-                    } else if (virtualTime % DOTS_PER_SCANLINE < 321) {
-                        switch ((virtualTime - 1) % 4) {
-                            case 0:
-                                break;  // waste nt get
-                    
-                            case 1:
-                                break;  // waste at get
-                    
-                            case 2:
-                                break;  // pt lo get
-                    
-                            case 3:
-                                break;  // pt hi get
-                        }
-                    } else if (virtualTime % DOTS_PER_SCANLINE < 337) {
-                        switch ((virtualTime - 1) % 4) {
-                            case 0:
-                                break;  // next nt get
-                    
-                            case 1:
-                                break;  // next at get
-                    
-                            case 2:
-                                break;  // next pt lo get
-                    
-                            case 3:
-                                break;  // next pt hi get
-                        }
-                    } else {
-                        switch ((virtualTime - 1) % 2) {
-                            case 0:
-                                break;  // some nt get
-                    
-                            case 1:
-                                break;  // some nt get
-                        }
-                    }
-                    break;
-                
-                case 240:
-                    // idle work
-                    break;
-                
-                default:
-                    // vblank lines
-                    break;
+            var frameDot = virtualTime % DOTS_PER_FRAME;
+            var dot      = (int)(frameDot % DOTS_PER_SCANLINE);
+            var line     = (int)scanline;
+
+            if (frameDot is 0) Video.ResetStream();
+
+            var isVisible   = line < 240;
+            var isPreRender = line is 261;
+
+            if (isPreRender && dot is 1) {
+                inVblank       = false;
+                nmiLine        = false;
+                spriteZeroHit  = false;
+                spriteOverflow = false;
             }
-            
-            switch (virtualTime % DOTS_PER_FRAME) {
-                case VBLANK_SET_DOT:
-                    if (virtualTime < warmupEndDot) break;
-                    inVblank = true;
-                    EdgeDetectNMI();
-                    break;
-                
-                case VBLANK_CLEAR_DOT:
-                    inVblank = false;
-                    nmiLine  = false;
-                    break;
+
+            if (line is 241 && dot is 1 && virtualTime >= warmupEndDot) {
+                inVblank = true;
+                EdgeDetectNMI();
             }
+
+            if (isVisible && dot >= 1 && dot <= 256) {
+                Video.Emit(0);
+            }
+
+            if (dot is 340) {
+                scanline++;
+                if (scanline >= 262) scanline = 0;
+            }
+        }
+
+        // ====================================================================
+        // PPU bus helpers (for $2007 access).
+        // CHR pattern fetches bypass this — they go directly through the
+        // cartridge so mapper bank-switching snoops fire on the right address.
+        // ====================================================================
+        private static byte ReadVRAM(ushort addr) {
+            // Nametable address: $2000-$2FFF (caller already masked the upper bits).
+            var rel  = (addr - 0x2000) & 0x0FFF;
+            var nt   = (rel >> 10) & 0x03;
+            var line = 
+                Program.Cartridge.PPUA10_11((nt & 0x01) is not 0, (nt & 0x02) is not 0) ? 0x400 : 0;
+            return VRAM[(line | (rel & 0x3FF)) & 0x7FF];
+        }
+
+        private static byte PPUBusRead(ushort addr) {
+            addr &= 0x3FFF;
+            if (addr < 0x2000) {
+                Registers.Address = addr;
+                return Program.Cartridge.PPUReadByte();
+            }
+            if (addr < 0x3F00) {
+                return ReadVRAM((ushort)(0x2000 | (addr & 0x0FFF)));
+            }
+            return PaletteRAM[NormalisePaletteAddr(addr)];
+        }
+
+        private static void PPUBusWrite(ushort addr, byte data) {
+            addr &= 0x3FFF;
+            if (addr < 0x2000) {
+                Registers.Address = addr;
+                Data = data;
+                Program.Cartridge.PPUWrite();
+                return;
+            }
+            if (addr < 0x3F00) {
+                var rel  = (addr - 0x2000) & 0x0FFF;
+                var nt   = (rel >> 10) & 0x03;
+                var line = Program.Cartridge.PPUA10_11((nt & 0x01) is not 0, (nt & 0x02) is not 0) ? 0x400 : 0;
+                VRAM[(line | (rel & 0x3FF)) & 0x7FF] = data;
+                return;
+            }
+            PaletteRAM[NormalisePaletteAddr(addr)] = data;
+        }
+
+        /// <summary>
+        /// Reduce a $3F00-$3F1F address to its canonical 5-bit palette RAM
+        /// index. Only $3F10/$14/$18/$1C are real mirrors of $3F00/$04/$08/$0C;
+        /// the rest are separate cells.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int NormalisePaletteAddr(ushort addr) {
+            var p = addr & 0x1F;
+            if ((p & 0x13) is 0x10) p &= 0x0F;
+            return p;
         }
 
         // NMI is edge-triggered on real hardware.
@@ -129,72 +136,146 @@ internal static class System {
         internal static byte[]   VRAM              = new byte[0x800];
         internal static ushort   tempVRAMAddr      = 0;
         internal static bool     latch             = false;
-        internal static byte[,,] PaletteRAM        = new byte[2, 4, 3];
-        internal static byte     backGroundPalette = 0;
+        /// <summary>
+        /// Palette RAM, flat 32 cells matching the chip's $3F00-$3F1F.
+        /// CPU writes to $3F10/$14/$18/$1C are normalised on the way in
+        /// to $3F00/$04/$08/$0C — those are the only true mirror pairs.
+        /// The "universal backdrop" used for any transparent output pixel
+        /// is always read from index 0 ($3F00).
+        /// </summary>
+        internal static byte[]   PaletteRAM        = new byte[32];
         private const   int      PPUFRAMELENGTH    = 89342;
 
         internal static class Registers {
+            /// <summary>
+            /// Live PPU bus address. Set transiently by the renderer's fetch
+            /// helpers (NT/AT/PT addresses) and by $2007 accesses (= v).
+            /// Cartridge snoops read this to know what's on the bus right now.
+            /// </summary>
             internal static ushort Address = 0;
             internal static byte   PPUDATA = 0;
-            
-            private static  bool   isEvenFrame;
 
-            internal static void W2007_PPUDATA() {
-                switch (Address) {
-                    case < 0x2000:
-                        // pt
-                        break;
-                    
-                    case < 0x3000:
-                        var line = (Address - 0x2000) & 0x3ff;
-                        line |= Program.Cartridge.PPUA10_11(
-                            (Address & 0x400) is 0x400, (Address & 0x800) is 0x800
-                        ) ? 0x400 : 0;
-                        VRAM[line & 0x7ff] =  Data;
-                        break;
+            // ----------------------------------------------------------------
+            // PPU internal data bus latch ("PPUGenLatch" / "io_db").
+            //
+            // Per nesdev: every PPU port access (read OR write) fills this
+            // latch with whatever was on the data bus. Reads of nominally
+            // write-only registers ($2000/$2001/$2003/$2005/$2006) return the
+            // latch unchanged. The unused low 5 bits of $2002 reads come from
+            // here too. $2004 and $2007 reads refill the latch with the byte
+            // they return. We don't model the analog decay (3-30 ms) because
+            // games that rely on decay are vanishingly rare.
+            //
+            // Before this implementation, the emulator used the shared `Data`
+            // bus field as a proxy — which is wrong: `Data` reflects the LAST
+            // CPU cycle's bus value (often an operand byte), not the PPU's
+            // own latch. Games that read open-bus PPU bits would see a
+            // different value here than on real hardware.
+            // ----------------------------------------------------------------
+            internal static byte ppuLatch;
 
-                    case < 0x3f00:
-                        // unused
-                        break;
-                    
-                    default:
-                        if ((Address & 3) is 0) {
-                            backGroundPalette = Data;
-                            break;
-                        }
-
-                        PaletteRAM[(Address & 0x10) >> 8, (Address & 0x0c) >> 2, Address & 0x03] = Data;
-                        break;
-                }
-            }
-
-            internal static void W2006_PPUADDR() {
-                if (latch) {
-                    tempVRAMAddr |= System.Data;
-                    latch        =  true;
-                    Address      =  tempVRAMAddr;
-                    return;
-                }
-                
-                tempVRAMAddr = (ushort)((System.Data & 0x3f) << 8);
-                latch        = true;
-            }
-            
-            
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2000_PPUCRTL() {
+                ppuLatch   = Data;
+                PPUCTRL    = Data;
                 NMIEnabled = (Data & 0x80) is 0x80;
+                // Nametable select bits drop into t bits 10-11.
+                tempVRAMAddr = (ushort)((tempVRAMAddr & 0xF3FF) | ((Data & 0x03) << 10));
                 EdgeDetectNMI();
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2001_PPUMASK() {
+                ppuLatch = Data;
+                PPUMASK  = Data;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2002_PPUSTATUS() {
-                Data         = (byte)(Data & 0x1f);              // preserve open bus bits 4:0
-                Data        |= (byte)(inVblank ? 0x80 : 0x00);  // bit 7: VBlank
-                // bit 6 (sprite 0 hit) and bit 5 (sprite overflow) remain 0 until PPU rendering is implemented
-                inVblank     = false;
-                nmiLine      = false;   // /NMI goes high when vblank clears
-                NMIAsserted  = false;   // suppress pending NMI (race-condition behavior)
+                // Low 5 bits come from the PPU's internal latch (open bus on
+                // the unused bits). Bits 5-7 are the live status flags.
+                Data        = (byte)(ppuLatch & 0x1f);
+                Data       |= (byte)(inVblank       ? 0x80 : 0x00);
+                Data       |= (byte)(spriteZeroHit  ? 0x40 : 0x00);
+                Data       |= (byte)(spriteOverflow ? 0x20 : 0x00);
+                ppuLatch    = Data;     // R2002 itself refreshes the latch with what it returns
+                inVblank    = false;
+                nmiLine     = false;
+                // Do NOT clear NMIAsserted here. NMIAsserted is the latched
+                // 0→1 edge of the /NMI signal; once the CPU has captured it,
+                // dropping the level (which is what R2002 does, by clearing
+                // inVblank) must not unqueue the pending interrupt. Only the
+                // CPU's interrupt dispatcher should clear NMIAsserted.
+                latch       = false;    // reading $2002 clears the $2005/$2006 write toggle
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2003_OAMADDR() {
+                ppuLatch   = Data;
+                OAMAddress = Data;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2004_OAMDATA() {
+                ppuLatch                = Data;
+                OAMBuffer[OAMAddress++] = Data;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2005_PPUSCROLL() {
+                ppuLatch = Data;
+                if (!latch) {
+                    // First write: fine X + coarse X
+                    fineX        = (byte)(Data & 0x07);
+                    tempVRAMAddr = (ushort)((tempVRAMAddr & 0x7FE0) | (Data >> 3));
+                    latch        = true;
+                } else {
+                    // Second write: fine Y + coarse Y
+                    tempVRAMAddr = (ushort)(
+                        (tempVRAMAddr & 0x0C1F) |
+                        ((Data & 0x07) << 12)   |   // fine Y -> bits 12-14
+                        ((Data & 0xF8) << 2));      // coarse Y -> bits 5-9
+                    latch = false;
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void W2006_PPUADDR() {
+                ppuLatch = Data;
+                if (!latch) {
+                    // First write: high 6 bits of t. Bit 14 cleared.
+                    tempVRAMAddr = (ushort)((tempVRAMAddr & 0x00FF) | ((Data & 0x3F) << 8));
+                    latch        = true;
+                } else {
+                    // Second write: low 8 bits of t, then copy t -> v.
+                    tempVRAMAddr = (ushort)((tempVRAMAddr & 0x7F00) | Data);
+                    v            = tempVRAMAddr;
+                    Address      = v;       // drive bus
+                    latch        = false;
+                }
+            }
+
+            internal static void W2007_PPUDATA() {
+                ppuLatch = Data;
+                Address  = v;
+                PPUBusWrite(v, Data);
+                v = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void R2007_PPUDATA() {
+                Address = v;
+                if ((v & 0x3FFF) < 0x3F00) {
+                    // Buffered read: yield previous buffer, then refill.
+                    Data          = ppuDataBuffer;
+                    ppuDataBuffer = PPUBusRead(v);
+                } else {
+                    // Palette: direct read; buffer holds NT mirror underneath.
+                    Data          = PPUBusRead(v);
+                    ppuDataBuffer = PPUBusRead((ushort)(v - 0x1000));
+                }
+                ppuLatch = Data;        // latch refreshes with the byte just returned
+                v        = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
             }
         }
 
@@ -212,7 +293,8 @@ internal static class System {
             
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2004_OAMDATA() {
-                Data = OAMBuffer[OAMAddress];
+                Data                 = OAMBuffer[OAMAddress];
+                Registers.ppuLatch   = Data;   // PPU latch refreshes with the byte returned
             }
 
             internal static void DMA() {
@@ -246,20 +328,151 @@ internal static class System {
             }
         }
         
-        private static byte[] spritelowBitPlaneRowSwap  = new byte[8];
-        private static byte[] spritehighBitPlaneRowSwap = new byte[8];
+        /// <summary>
+        /// Video output stage. Owns the NES base palette and the 512-entry
+        /// final-color lookup table (64 hues × 8 PPUMASK emphasis combos).
+        /// </summary>
+        internal static class Video {
+            // 2C02 NTSC palette, 0x00RRGGBB. Source: nesdev "NTSC video" reference.
+            private static readonly uint[] BasePalette = {
+                0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800,
+                0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000,
+                0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00,
+                0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000,
+                0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820,
+                0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000,
+                0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490,
+                0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,
+            };
 
-        private static byte   lowBitPlaneRow;
-        private static byte   highBitPlaneRow;
-        private static byte   attributeTableValue;
-        private static byte   patternTableValue;
-        private static byte   lowBitPlaneRowSwap;
-        private static byte   highBitPlaneRowSwap;
-        private static byte   attributeTableValueSwap;
-        private static byte   patternTableValueSwap;
-        
+            /// <summary>
+            /// 512-entry LUT in ARGB8888 (alpha=0xFF). Index = (emphasis &lt;&lt; 6) | paletteIdx.
+            /// Built once from BasePalette × emphasis attenuation × user shader.
+            /// </summary>
+            internal static readonly uint[] LUT = new uint[512];
+
+            /// <summary>
+            /// Build the final-color LUT. Call after a shader has been installed.
+            /// Safe to call again to rebuild (e.g. if the shader is swapped).
+            /// </summary>
+            internal static void BuildLUT() {
+                for (var emph = 0; emph < 8; emph++) {
+                    var attenR = (emph & 0b010) is not 0 || (emph & 0b100) is not 0 ? 0.75f : 1f;
+                    var attenG = (emph & 0b001) is not 0 || (emph & 0b100) is not 0 ? 0.75f : 1f;
+                    var attenB = (emph & 0b001) is not 0 || (emph & 0b010) is not 0 ? 0.75f : 1f;
+
+                    for (var hue = 0; hue < 64; hue++) {
+                        var rgb = BasePalette[hue];
+                        var r = (byte)((rgb >> 16) & 0xff);
+                        var g = (byte)((rgb >>  8) & 0xff);
+                        var b = (byte)( rgb        & 0xff);
+
+                        r = (byte)(r * attenR);
+                        g = (byte)(g * attenG);
+                        b = (byte)(b * attenB);
+
+                        var shaded = Program.Shader.Recolour(new SDL3.SDL.Color { R = r, G = g, B = b, A = 0xff });
+                        LUT[(emph << 6) | hue] = (uint)(0xff << 24 | shaded.R << 16 | shaded.G << 8 | shaded.B);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Stream cursor — index of the next pixel slot in
+            /// <see cref="Renderer.BackBuffer"/> to fill. Resets to 0 at frame
+            /// start. There is no horizontal/vertical addressing because the
+            /// PPU itself has none: its output stage drives a serial video
+            /// signal and the framebuffer is whatever happens to be latched
+            /// from that stream over one frame's worth of /VIS-active dots.
+            /// </summary>
+            private static int _cursor;
+
+            /// <summary>
+            /// Called once at frame start. Returns the stream to the
+            /// top-left of the next frame so subsequent <see cref="Emit"/>
+            /// calls fill the buffer from the beginning.
+            /// </summary>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void ResetStream() => _cursor = 0;
+
+            /// <summary>
+            /// Emit the next pixel in the video stream.
+            ///
+            /// This mirrors the PPU output stage: at every /VIS-active dot
+            /// the pixel composer multiplexes BG and the 8 sprite candidates
+            /// down to a single 5-bit address, indexes palette RAM (with
+            /// universal-backdrop substitution for any "transparent" pixel),
+            /// applies the PPUMASK colour controls, and clocks the result
+            /// out the video pin. Downstream — that is, us — latches it
+            /// into the next slot in the framebuffer.
+            ///
+            /// Call once per /VIS-active dot in raster order. Real hardware
+            /// emits every /VIS dot regardless of PPUMASK state — when
+            /// rendering is off, the mux output is just 0 and you get the
+            /// backdrop colour. Do the same here: keep emitting, do not
+            /// skip dots, or the buffer retains stale pixels.
+            /// </summary>
+            /// <param name="muxOutput">
+            /// 5-bit pixel-composer mux output:
+            /// <list type="bullet">
+            /// <item>bit 4 — source (0 = background, 1 = sprite)</item>
+            /// <item>bits 3:2 — palette select within the BG or sprite half</item>
+            /// <item>bits 1:0 — colour within the palette (0 = transparent → universal backdrop)</item>
+            /// </list>
+            /// </param>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void Emit(byte muxOutput) {
+                if ((uint)_cursor >= (uint)(Renderer.Width * Renderer.Height)) return;
+
+                // Transparent (colour-in-palette == 0) always reads $3F00
+                // regardless of which sub-palette the mux selected — that's
+                // the chip's universal backdrop substitution. Otherwise the
+                // 5-bit mux output IS the palette RAM index.
+                var pIdx      = (muxOutput & 0x03) is 0 ? 0 : (muxOutput & 0x1F);
+                var nesColour = PaletteRAM[pIdx];
+
+                var idx = nesColour & 0x3f;
+                if ((PPUMASK & 0x01) is not 0) idx &= 0x30;      // grayscale
+                var emph = (PPUMASK >> 5) & 0x07;
+
+                Renderer.BackBuffer[_cursor++] = LUT[(emph << 6) | idx];
+            }
+        }
+
+        // =============================================================
+        // Scroll / address registers
+        //
+        // v: the live PPU address used by rendering (15 bits).
+        //    yyy NN YYYYY XXXXX  — fine Y, NT select, coarse Y, coarse X.
+        // t: temporary VRAM address. Loaded by $2000/$2005/$2006 writes;
+        //    copied to v at specific render boundaries (dot 257 horiz,
+        //    dots 280..304 vert) and on the second $2006 write.
+        // fineX: 3-bit per-pixel horizontal offset into the BG shifters.
+        // latch: shared write toggle for $2005 and $2006 (the "w" flag).
+        // =============================================================
+        internal static ushort v;
+        internal static byte   fineX;
+
+        /// <summary>
+        /// PPUCTRL latched byte.
+        /// bit 0-1: nametable select (also written into t bits 10-11 by W2000)
+        /// bit 2:   $2007 increment (0 = +1, 1 = +32)
+        /// bit 3:   sprite pattern table base (8×8 mode)
+        /// bit 4:   BG pattern table base
+        /// bit 5:   8×16 sprite mode
+        /// bit 7:   NMI enable
+        /// </summary>
+        internal static byte   PPUCTRL;
+
+        /// <summary>$2007 read buffer (returns previous byte, then refreshes).</summary>
+        internal static byte   ppuDataBuffer;
+
+        // ---- PPUSTATUS bits ----
+        internal static bool   spriteZeroHit;
+        internal static bool   spriteOverflow;
+
         private static ushort scanline;
-        
+
         private static bool dmaAlign;
         private static byte dmaLatch;
         private static byte dmaPage;
@@ -274,6 +487,14 @@ internal static class System {
         internal static byte   OAMAddress;
         internal static byte   OAMData;
         internal static byte[] OAMBuffer = new byte[256];
+
+        /// <summary>
+        /// PPUMASK register state. Bit 0 = greyscale, bits 1/2 = show
+        /// BG/sprites in leftmost 8 px, bits 3/4 = show BG/sprites at all,
+        /// bits 7:5 = R/G/B emphasis. Read live each output dot so mid-line
+        /// writes affect mid-line pixels.
+        /// </summary>
+        internal static byte   PPUMASK;
     }
     
     internal static class APU {
@@ -961,15 +1182,19 @@ internal static class System {
             }
             
             if (address < 0x4000) {
+                // Reads of nominally write-only registers ($2000/$2001/$2003/$2005/$2006)
+                // return the PPU's internal data bus latch ("PPUGenLatch"), NOT the CPU
+                // data bus. The latch reflects the last byte the PPU put on its bus —
+                // any write to any PPU register, or any byte returned by $2002/$2004/$2007.
                 switch (address & 0x2007) {
-                    case PPUCTRL:   data = Data;                              goto SendReadToCart; // write-only, open bus
-                    case PPUMASK:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case PPUCTRL:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUMASK:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
                     case PPUSTATUS: PPU.Registers.R2002_PPUSTATUS(); data = Data; goto SendReadToCart;
-                    case OAMADDR:   data = Data;                              goto SendReadToCart; // write-only, open bus
+                    case OAMADDR:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
                     case OAMDATA:   PPU.OAM.R2004_OAMDATA();         data = Data; goto SendReadToCart;
-                    case PPUSCROLL: data = Data;                              goto SendReadToCart; // write-only, open bus
-                    case PPUADDR:   data = Data;                              goto SendReadToCart; // write-only, open bus
-                    case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] PPUDATA read not implemented");
+                    case PPUSCROLL: data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUADDR:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUDATA:   PPU.Registers.R2007_PPUDATA(); data = Data; goto SendReadToCart;
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
                         Quit = true;
@@ -1004,14 +1229,14 @@ internal static class System {
                 
                 case < 0x4000:
                     switch (Address & 0x2007) {
-                        case PPUCTRL:   PPU.Registers.W2000_PPUCRTL(); goto SendReadToCart;
-                        case PPUMASK:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case PPUCTRL:   PPU.Registers.W2000_PPUCRTL();   goto SendReadToCart;
+                        case PPUMASK:   PPU.Registers.W2001_PPUMASK();   goto SendReadToCart;
                         case PPUSTATUS: goto SendReadToCart; // read-only, writes ignored
-                        case OAMADDR:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
-                        case OAMDATA:   throw new NotImplementedException("[CPU] [Memory] [OAM] Not Implemented"); break;
-                        case PPUSCROLL: throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
-                        case PPUADDR:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
-                        case PPUDATA:   throw new NotImplementedException("[CPU] [Memory] [PPU] Not Implemented"); break;
+                        case OAMADDR:   PPU.Registers.W2003_OAMADDR();   goto SendReadToCart;
+                        case OAMDATA:   PPU.Registers.W2004_OAMDATA();   goto SendReadToCart;
+                        case PPUSCROLL: PPU.Registers.W2005_PPUSCROLL(); goto SendReadToCart;
+                        case PPUADDR:   PPU.Registers.W2006_PPUADDR();   goto SendReadToCart;
+                        case PPUDATA:   PPU.Registers.W2007_PPUDATA();   goto SendReadToCart;
                     }
                     break;
                 
@@ -1138,18 +1363,11 @@ internal static class System {
                 }
             }
 
-            if (virtualTime % DOTS_PER_FRAME is 0 && Throttle > 0f) {
-                var frameStartTick = Stopwatch.GetTimestamp();
-
-                var effectiveFrameSeconds = frameTimeSeconds / Throttle;
-                var frameTicks = (long)(effectiveFrameSeconds * freq);
-                if (frameTicks < 1) frameTicks = 1;
-
-                if (frameDeadlineTick == 0 || Throttle != lastThrottle) {
-                    lastThrottle = Throttle;
-                    frameDeadlineTick = frameStartTick + frameTicks;
-                }
-
+            if (virtualTime % DOTS_PER_FRAME is 0) {
+                // Publish the just-finished frame to the renderer thread and
+                // drain audio. These are independent of pacing — they must
+                // happen every frame regardless of Throttle, otherwise we
+                // produce no video and silence.
                 Renderer.Present();
 
                 if (Throttle == 1f)
@@ -1157,37 +1375,52 @@ internal static class System {
                 else
                     SampleBuffer.Clear();
 
-                var workEndTick = Stopwatch.GetTimestamp();
+                frames++;
 
-                if (workEndTick > frameDeadlineTick) {
-                    lateFrames++;
+                // Pacing wait — only when the user requested throttling.
+                // Without it we run flat-out and the CPU will pin a core.
+                if (Throttle > 0f) {
+                    var frameStartTick = Stopwatch.GetTimestamp();
 
-                    var lateMs = (workEndTick - frameDeadlineTick) * 1000.0 / freq;
-                    if (lateMs > worstLateMs) worstLateMs = lateMs;
+                    var effectiveFrameSeconds = frameTimeSeconds / Throttle;
+                    var frameTicks = (long)(effectiveFrameSeconds * freq);
+                    if (frameTicks < 1) frameTicks = 1;
 
-                    if (Program.Config.Strict) {
-                        Console.WriteLine("[CPU] Unable to compute in time");
-                        Quit = true;
-                        return;
+                    if (frameDeadlineTick == 0 || Throttle != lastThrottle) {
+                        lastThrottle      = Throttle;
+                        frameDeadlineTick = frameStartTick + frameTicks;
                     }
 
-                    var behindTicks = workEndTick              - frameDeadlineTick;
-                    var missed      = behindTicks / frameTicks + 1;   // number of boundaries missed
-                    frameDeadlineTick += missed * frameTicks;
-                } else {
-                    while (Stopwatch.GetTimestamp() < frameDeadlineTick) {
-                        Thread.Yield();
-                    }
+                    var workEndTick = Stopwatch.GetTimestamp();
 
-                    frameDeadlineTick += frameTicks;
+                    if (workEndTick > frameDeadlineTick) {
+                        lateFrames++;
 
-                    var afterWait = Stopwatch.GetTimestamp();
-                    if (afterWait > frameDeadlineTick) {
-                        frameDeadlineTick = afterWait + frameTicks;
+                        var lateMs = (workEndTick - frameDeadlineTick) * 1000.0 / freq;
+                        if (lateMs > worstLateMs) worstLateMs = lateMs;
+
+                        if (Program.Config.Strict) {
+                            Console.WriteLine("[CPU] Unable to compute in time");
+                            Quit = true;
+                            return;
+                        }
+
+                        var behindTicks = workEndTick              - frameDeadlineTick;
+                        var missed      = behindTicks / frameTicks + 1;
+                        frameDeadlineTick += missed * frameTicks;
+                    } else {
+                        while (Stopwatch.GetTimestamp() < frameDeadlineTick) {
+                            Thread.Yield();
+                        }
+
+                        frameDeadlineTick += frameTicks;
+
+                        var afterWait = Stopwatch.GetTimestamp();
+                        if (afterWait > frameDeadlineTick) {
+                            frameDeadlineTick = afterWait + frameTicks;
+                        }
                     }
                 }
-
-                frames++;
 
                 var now = Stopwatch.GetTimestamp();
                 if (nextPrint == 0) nextPrint = now + freq;
@@ -1195,8 +1428,8 @@ internal static class System {
                     #if DEBUG
                     Console.WriteLine($"[CPU] thr={Throttle:0.###} fps={frames:0} late={lateFrames} worstLateMs={worstLateMs:0.###}");
                     #endif
-                    frames = 0;
-                    lateFrames = 0;
+                    frames      = 0;
+                    lateFrames  = 0;
                     worstLateMs = 0;
                     do nextPrint += freq; while (nextPrint <= now);
                 }
@@ -1437,7 +1670,6 @@ internal static class System {
         internal const ushort IRQ   = 0xfffe;
     }
 
-    private const ulong BaseClockSpeed = 1_789_773ul;
     private const ulong  dotsPerSecond  = 5_369_318ul;
 
     internal static bool   RDY;

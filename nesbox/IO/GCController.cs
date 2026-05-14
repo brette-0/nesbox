@@ -7,12 +7,11 @@ namespace nesbox.IO;
  *  This is a WIP controller idea. Do not use it, it doesn't work unless you're the guy working with me on it
  */
 
-// TODO: We've been bouncing back between approaches, current approach is going to destroy CPU. Fix needed
-
 // ReSharper disable once InconsistentNaming
 internal sealed class GCController : API.IIO, API.IClockDriven {
     public GCController() {
         Link.Subscribe.OnTick(this);
+        _controllerIntervalTime = API.Helper.MillisecondsToTicks(4f);
     }
     
     public byte OnRead() {
@@ -36,14 +35,6 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     _taskLatch   = false;
                     return 0;
 
-                case ModeSelect.Skip:
-                    _pollingMaskBuffer <<= 1;
-                    _pollingMaskBuffer |= System.IOAssertion ? 0x01 : (ulong)0x00;
-                    if (--_taskLength is not 0) return 0;
-                    _pollingMask = _pollingMaskBuffer;
-                    _taskLatch   = false;
-                    return 0;
-
                 case ModeSelect.Rumble:
                     return 0;
 
@@ -53,6 +44,12 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
                     _flip      = _flipBuffer;
                     _taskLatch = false;
                     return 0;
+                
+                case ModeSelect.Legacy:
+                    break;
+                
+                case ModeSelect.LegacySetup:
+                    break;
 
                 case ModeSelect.End:
                 default:
@@ -78,7 +75,6 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
         Legacy,
         Report,
         Behavior,
-        Skip,
         Rumble,
         Invert,
         LegacySetup,
@@ -87,72 +83,78 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
     
     [Flags]
     private enum PollingMode : byte {
-        LtoC     = 0x01,  // Sends actuation of L to C
-        CtoL     = 0x02,  // Sends actuation of C to L
-        DToL     = 0x04,  // sends signal of d-pad to L if actuated, else L wins
-        DToC     = 0x08,  // sends signal of d-pad to C if actuated, else C wins
-        LPrecalc = 0x10,  // precalculates L trig angles in 8bit degrees
-        CPrecalc = 0x20,  // precalculates C trig angles in 8bit degrees
+        LtoC            = 0x01,  // Sends actuation of L to C
+        CtoL            = 0x02,  // Sends actuation of C to L
+        DToL            = 0x04,  // sends signal of d-pad to L if actuated, else L wins
+        DToC            = 0x08,  // sends signal of d-pad to C if actuated, else C wins
+        UnifiedTrigger  = 0x10,
+        NoTriggers      = 0x20,
+        NoCStick        = 0x40,
+        NoLStick        = 0x80,
+    }
+
+    [Flags]
+    private enum LegacyPollingMode : byte {
+        X_IS_TURBO_A    = 0x01,
+        Y_IS_TURBO_B    = 0x02,
     }
 
 
     // adaptor => console
-    private ulong       _flipBuffer;
-    private ulong       _flip;
-    private byte        _nInputs;           // the amount of bits to report
-    private ulong       _pollingMaskBuffer; // set when building mask
-    private ulong       _pollingMask;       // set by completing buffer, fetched when using active
-    private byte        _pollingModeBuffer;
-    private byte        _taskLength;
-    private PollingMode _pollingMode;      // mode of behavior
-    private ModeSelect  _modeSelect;
-    private bool        _taskLatch; // latch onto task
-    private byte        _port;
+    private ulong             _flipBuffer;
+    private ulong             _flip;
+    private byte              _pollingModeBuffer;
+    private byte              _taskLength;
+    private PollingMode       _pollingMode;      // mode of behavior
+    private LegacyPollingMode _legacyPollingMode;
+    private ModeSelect        _modeSelect;
+    private bool              _taskLatch; // latch onto task
+    private byte              _port;
     
     // adaptor => controller
     private ulong  _shift;
 
+    private ulong _deltaTicks;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public  void        OnTick() {
-        if (_modeSelect is ModeSelect.Legacy) {
-            if (System.IOAssertion) {
-                // reset shift position
-                return;
-            }
-        }
+        // real time response time sim
+        _deltaTicks += 1;
+        if (_deltaTicks < _controllerIntervalTime) return;
+        _deltaTicks = 0;
 
         ulong report = 0;
         
         var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
         if (gp is 0) { _shift = 0; _taskLength = 0; return; }
         
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))                 _shift |= 0x001; // B
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))                  _shift |= 0x002; // Y
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))                  _shift |= 0x004; // Select
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))                 _shift |= 0x008; // Start
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))                _shift |= 0x010; // Up
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadDown))              _shift |= 0x020; // Down
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadLeft))              _shift |= 0x040; // Left
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadRight))             _shift |= 0x080; // Right
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.North))                 _shift |= 0x100; // A
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.West))                  _shift |= 0x200; // X
-        if (SDL.GetGamepadAxis  (gp, SDL.GamepadAxis.  LeftTrigger ) is not 0) _shift |= 0x400; // L atomic
-        if (SDL.GetGamepadAxis  (gp, SDL.GamepadAxis.  RightTrigger) is not 0) _shift |= 0x800; // R atomic
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))                 report |= 0x001; // B
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))                  report |= 0x002; // Y
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))                  report |= 0x004; // Select
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))                 report |= 0x008; // Start
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))                report |= 0x010; // Up
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadDown))              report |= 0x020; // Down
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadLeft))              report |= 0x040; // Left
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadRight))             report |= 0x080; // Right
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.North))                 report |= 0x100; // A
+        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.West))                  report |= 0x200; // X
+        if (SDL.GetGamepadAxis  (gp, SDL.GamepadAxis.  LeftTrigger ) is not 0) report |= 0x400; // L atomic
+        if (SDL.GetGamepadAxis  (gp, SDL.GamepadAxis.  RightTrigger) is not 0) report |= 0x800; // R atomic
 
-        _shift |= 0x1000;   // signature (not a nes/snes controller)
+        report |= 0x1000;   // signature (not a nes/snes controller)
         
-        _shift |= (uint)(ProcessTrigger(SDL.GamepadAxis.LeftTrigger) << 13);
-        _shift |= (uint)(ProcessTrigger(SDL.GamepadAxis.RightTrigger) << 21);
+        report |= (uint)(ProcessTrigger(gp, SDL.GamepadAxis.LeftTrigger)  << 13);
+        report |= (uint)(ProcessTrigger(gp, SDL.GamepadAxis.RightTrigger) << 21);
 
-        var (lx, ly) =  ProcessStick((SDL.GamepadAxis.LeftX, SDL.GamepadAxis.LeftY));
-        var (cx, cy) =  ProcessStick((SDL.GamepadAxis.RightX, SDL.GamepadAxis.RightY));
-        _shift       |= (ulong)lx << 29;
-        _shift       |= (ulong)ly << 37;
-        _shift       |= (ulong)cx << 45;
-        _shift       |= (ulong)cy << 53;
+        var (lx, ly) =  ProcessStick(gp, (SDL.GamepadAxis.LeftX, SDL.GamepadAxis.LeftY));
+        var (cx, cy) =  ProcessStick(gp, (SDL.GamepadAxis.RightX, SDL.GamepadAxis.RightY));
+        report       |= (ulong)lx << 29;
+        report       |= (ulong)ly << 37;
+        report       |= (ulong)cx << 45;
+        report       |= (ulong)cy << 53;
         
         // flip bits
-        _shift ^= _flip;
+        report ^= _flip;
 
         if (_pollingMode.HasFlag(PollingMode.LtoC) && cx is 0 && cy is 0) {
             (cx, cy) = (lx, ly);
@@ -165,40 +167,17 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             (lx, ly) = (cx, cy);
         }
 
-        if (_pollingMode.HasFlag(PollingMode.LPrecalc)) {
-            lx     =  (byte)(256 * Math.Atan2(lx, ly));
-            _shift |= (ulong)lx << 29;
-            ly     =  (byte)(256 * Math.Sqrt(lx * lx + ly * ly));
-            _shift |= (ulong)ly << 37;
-        }
-
-
-        if (_pollingMode.HasFlag(PollingMode.CPrecalc)) {
-            cx     =  (byte)(256 * Math.Atan2(cx, cy));
-            _shift |= (ulong)cx << 45;
-            cy     =  (byte)(256 * Math.Sqrt(cx * cx + cy * cy));
-            _shift |= (ulong)cy << 37;
-        } 
-
         CopyPadToStick(PollingMode.DToL, ref lx, ref ly);
         CopyPadToStick(PollingMode.DToC, ref cx, ref cy);
-        
-        // copy wanted bits into second by skipping bits clear in mask
-        _shift = 0;
-        for (var s = 0; s < _nInputs; s++) {
-            if ((_pollingMask & (ulong)1 << s) is 0) continue;
-            report |=  (report    >> s) & 1;
-            _shift <<= 1;
-        }
                     
         // ready for reading
-        
-        // ReSharper disable once SeparateLocalFunctionsWithJumpStatement
+    }
+    
+     // ReSharper disable once SeparateLocalFunctionsWithJumpStatement
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void CopyPadToStick(PollingMode stick, ref byte x, ref byte y) {
-            if (!_pollingMode.HasFlag(PollingMode.LPrecalc) ||
-                !_pollingMode.HasFlag(stick)                ||
-                lx is not 0) return;
+        private void CopyPadToStick(PollingMode stick, ref byte x, ref byte y) {
+            if (!_pollingMode.HasFlag(stick)                ||
+                x is not 0) return;
             
             var dpad = (byte)((_shift >> 4) & 0x0f);
             if (dpad is 0) return;  // doesn't replace L unless in use
@@ -221,10 +200,11 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             (x, y) = ((byte)a, (byte)m);
         }
         
+        // resolution scaling for triggers
         // ReSharper disable once SeparateLocalFunctionsWithJumpStatement
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        byte ProcessTrigger(SDL.GamepadAxis axis) {
-            var  capture = SDL.GetGamepadAxis(gp, axis);
+        private static byte ProcessTrigger(nint GamePad, SDL.GamepadAxis axis) {
+            var  capture  = SDL.GetGamepadAxis(GamePad, axis);
             byte capture8 = 0;
             for (var i = 0; i < 8; i++) {
                 capture8 |=  (byte)((capture >> (2 * i + 1)) & 1);
@@ -234,10 +214,11 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             return capture8;
         }
         
+        // resolution scaling for sticks
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        (byte, byte) ProcessStick((SDL.GamepadAxis x, SDL.GamepadAxis y) axes) {
-            var  x  = SDL.GetGamepadAxis(gp, axes.x);
-            var  y  = SDL.GetGamepadAxis(gp, axes.y);
+        private static (byte, byte) ProcessStick(nint GamePad, (SDL.GamepadAxis x, SDL.GamepadAxis y) axes) {
+            var x = SDL.GetGamepadAxis(GamePad, axes.x);
+            var y = SDL.GetGamepadAxis(GamePad, axes.y);
             (byte x8, byte y8) = (0, 0);
             for (var i = 0; i < 8; i++) {
                 x8 |=  (byte)((x >> (2 * i + 1)) & 1);
@@ -248,5 +229,6 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             
             return (x8, y8);
         }
-    }
+
+    private static ulong _controllerIntervalTime;
 }

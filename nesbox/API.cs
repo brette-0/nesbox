@@ -16,6 +16,29 @@ public static class API {
             internal SDL3.SDL.Color Recolour(SDL3.SDL.Color c);    
         }
     }
+
+    public static class Helper {
+        private const double PpuFrequencyHz = 236250000.0   / 11.0 / 4.0;
+       
+        /// <summary>
+        /// should be used for diagnostic information primarily
+        /// </summary>
+        /// <param name="ticks">the amount of ticks to convert into time</param>
+        /// <returns></returns>
+        public static double TicksToMilliseconds(ulong ticks) {
+            return ticks * 1000.0 / PpuFrequencyHz;
+        }
+        
+        /// <summary>
+        /// should be used to convert real time into discrete time
+        /// </summary>
+        /// <param name="milliseconds">real time to convert to discrete time</param>
+        /// <returns></returns>
+        public static ulong MillisecondsToTicks(double milliseconds) {
+            return (ulong)(milliseconds * PpuFrequencyHz / 1000.0);
+        }
+    }
+    
     public static class Implementation {
         public ref struct ImplHandshake {
             internal ICartridge?           cartridge;
@@ -194,7 +217,7 @@ public static class API {
         /// Expects information from CPU Address, is contextualized as a write
         /// </summary>
         public void CPUWrite();
-        
+
         /// <summary>
         /// Expects information from PPU Address, is contextualized as a read
         /// </summary>
@@ -204,16 +227,16 @@ public static class API {
         /// Expects information from PPU Address, is contextualized as a write
         /// </summary>
         public void PPUWrite();
-        
+
         /// <summary>
         /// This should not trigger internal hardware for on-reads, but should only return the information at the location
         /// CPURead will always be invoked immediately after
         /// </summary>
         /// <returns></returns>
         [Pure] public byte CPUReadByte();
-        
+
         [Pure] public byte PPUReadByte();
-        
+
         [Pure] public byte ReadByte(ushort address);
 
         /// <summary>
@@ -222,11 +245,56 @@ public static class API {
         /// <param name="address">address in CPU space to find ROM space location for</param>
         /// <returns>ROM space location of address in CPU space</returns>
         public int GetROMLocation(ushort address);
-        
+
         public byte[] ProgramROM   { get; set; }
         public byte[] CharacterROM { get; set; }
 
         public bool PPUA10_11(bool a10, bool a11);
+
+        // ------------------------------------------------------------------
+        // PPU H-decoder snoop signals.
+        //
+        // The PPU fires these as its horizontal decoder advances. The cart
+        // sees the current PPU address bus (System.PPU.Registers.Address) at
+        // the moment each one fires, which is how mappers like MMC2/MMC3/MMC5
+        // implement bank-switching and scanline IRQs.
+        //
+        // Each one fires once per fetch — the cart can read the bus during
+        // the fetch and apply side effects (CHR bank swap, IRQ counter
+        // increment, etc.) without the PPU caring.
+        // ------------------------------------------------------------------
+
+        /// <summary>/F_NT fires: background nametable fetch.
+        /// Bus holds $2000 | (v &amp; 0x0FFF).</summary>
+        public void F_NT();
+
+        /// <summary>F_AT fires: background attribute fetch.
+        /// Bus holds $23C0 | (v &amp; 0x0C00) | ((v &gt;&gt; 4) &amp; 0x38) | ((v &gt;&gt; 2) &amp; 0x07).</summary>
+        public void F_AT();
+
+        /// <summary>F_TA fires: background pattern low plane fetch.</summary>
+        public void F_TA();
+
+        /// <summary>F_TB fires: background pattern high plane fetch.
+        /// MMC2/MMC4 snoop this to switch CHR banks on specific tile fetches.</summary>
+        public void F_TB();
+
+        /// <summary>OBJ_READ phase 1: sprite "garbage" NT fetch.
+        /// MMC5 uses this to know which of the 8 sprite slots is being fetched.</summary>
+        public void OBJ_NT();
+
+        /// <summary>OBJ_READ phase 2: sprite pattern low plane fetch.</summary>
+        public void OBJ_TA();
+
+        /// <summary>OBJ_READ phase 3: sprite pattern high plane fetch.</summary>
+        public void OBJ_TB();
+
+        /// <summary>/A12 line rose. MMC3 increments its scanline IRQ counter here,
+        /// gated by a ~16 PPU cycle low-time filter.</summary>
+        public void A12_Rise();
+
+        /// <summary>/A12 line fell.</summary>
+        public void A12_Fall();
     }
 
     internal interface IFamicomCartridge : ICartridge {

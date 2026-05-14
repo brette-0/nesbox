@@ -1,4 +1,3 @@
-﻿using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 using EList;
 using nesbox;
@@ -8,8 +7,6 @@ internal sealed class BULLCART : API.IFamicomCartridge {
     public BULLCART(ref EList<string> args) {
         var next = new EList<string>();
 
-        
-        
         while (args.MoveNext()) {
             switch (args.Current) {
                 case "--program":
@@ -18,32 +15,32 @@ internal sealed class BULLCART : API.IFamicomCartridge {
                         System.Quit = true;
                         return;
                     }
-                    
+
                     #if DEBUG
                     Console.WriteLine("Fetching Program ROM...");
                     #endif
-                    
+
                     API.GetProgramROM(args.Current, ref __ProgramROM);
                     if (ProgramROM.Length is 0) {
                         System.Quit = true;
                         return;
                     }
                     break;
-                
+
                 case "--character":
                     if (!args.MoveNext()) {
                         Console.WriteLine("[CART] No Character ROM file path specified");
                         System.Quit = true;
                         return;
                     }
-                    
+
                     API.GetCharacterROM(args.Current, ref __CharacterROM);
                     if (CharacterROM.Length is 0) {
                         System.Quit = true;
                         return;
                     }
                     break;
-                
+
                 default:
                     next.Add(args.Current);
                     break;
@@ -55,15 +52,15 @@ internal sealed class BULLCART : API.IFamicomCartridge {
             System.Quit = true;
             return;
         }
-        
-        
+
+
         if (ProgramROM.Length > 0x8000) {
             Console.WriteLine($"[CART] Program ROM is too large");
             System.Quit = true;
             return;
         }
 
-        if ((ProgramROM.Length & ~0xc000) != ProgramROM.Length) {
+        if ((ProgramROM.Length & (ProgramROM.Length - 1)) is not 0) {
             Console.WriteLine($"[CART] Program ROM is illegal size");
             System.Quit = true;
             return;
@@ -75,43 +72,75 @@ internal sealed class BULLCART : API.IFamicomCartridge {
             return;
         }
 
-        if ((CharacterROM.Length & ~0x2000) != CharacterROM.Length) {
+        if ((CharacterROM.Length & (CharacterROM.Length - 1)) is not 0) {
             Console.WriteLine($"[CART] Character ROM is illegal size");
             System.Quit = true;
             return;
         }
 
-        if (ProgramROM.Length < 0x8000) {
-            CPUProgramReadByteTask = self            => self.SmallProgramCPUReadByte();
-            ProgramReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
-        } 
-        
-        if (CharacterROM.Length < 0x8000) {
-            PPUCharacterReadByteTask = self            => self.SmallProgramCPUReadByte();
-            CharacterReadByteTask    = (self, address) => self.SmallProgramReadByte(address);
-        }
-
         args = next;
     }
-    
+
     public void ProgramRead(ushort address) { }
     public void CPUWrite() { }
-    
+
     public void PPURead() { }
 
     public void PPUWrite() {
         throw new NotImplementedException();
     }
 
-    public byte ReadByte(ushort       address) => ProgramReadByteTask(this, address);
-    public int  GetROMLocation(ushort address) => address;
-    public byte CPUReadByte()                  => CPUProgramReadByteTask(this);
-    public byte PPUReadByte()                  => PPUCharacterReadByteTask(this);
+    public int GetROMLocation(ushort address) => address;
 
-    public byte[] ProgramROM                           { get => __ProgramROM;   set => __ProgramROM = value; }
-    public byte[] CharacterROM                         { get => __CharacterROM; set => __CharacterROM = value ; }
+    /// <summary>
+    /// CPU-side PRG read. Below $8000 the cart's not selected — return open
+    /// bus (high byte of the address). At/above $8000, mirror into PRG-ROM
+    /// by masking with (Length - 1). Length is power-of-two by construction.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public byte CPUReadByte() {
+        var addr = System.Address;
+        return addr < 0x8000
+            ? (byte)(addr >> 8)
+            : ProgramROM[(addr - 0x8000) & (ProgramROM.Length - 1)];
+    }
+
+    /// <summary>
+    /// Same mapping as <see cref="CPUReadByte"/> but for explicit-address
+    /// callers (DMC sample fetch, debugger peeks).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public byte ReadByte(ushort address) =>
+        address < 0x8000
+            ? (byte)(address >> 8)
+            : ProgramROM[(address - 0x8000) & (ProgramROM.Length - 1)];
+
+    /// <summary>
+    /// PPU-side CHR read. Caller is expected to drive the bus with a pattern
+    /// table address (&lt; $2000); anything higher is the PPU's own VRAM /
+    /// palette and never reaches the cart in normal operation.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public byte PPUReadByte() {
+        var addr = System.PPU.Registers.Address;
+        if (CharacterROM.Length is 0) return 0;   // no CHR-ROM, bus floats — open-bus stub
+        return CharacterROM[addr & (CharacterROM.Length - 1)];
+    }
+
+    public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
+    public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value; }
     public bool   PPUA10_11(bool a10, bool _) => a10;
     public float  ModifyAPUSignal(float signal) => signal;
+
+    public void F_NT()    { }
+    public void F_AT()    { }
+    public void F_TA()    { }
+    public void F_TB()    { }
+    public void OBJ_NT()  { }
+    public void OBJ_TA()  { }
+    public void OBJ_TB()  { }
+    public void A12_Rise(){ }
+    public void A12_Fall(){ }
 
     public bool  EXPO                          { get; set; }
     public bool  EXP1                          { get; set; }
@@ -126,59 +155,4 @@ internal sealed class BULLCART : API.IFamicomCartridge {
 
     private byte[] __ProgramROM   = [];
     private byte[] __CharacterROM = [];
-
-    #region CPUReadByte
-    private Func<BULLCART, byte>         CPUProgramReadByteTask   = self            => self.StandardProgramCPUReadByte();
-    private Func<BULLCART, ushort, byte> ProgramReadByteTask      = (self, address) => self.StandardProgramReadByte(address);
-    private Func<BULLCART, byte>         PPUCharacterReadByteTask = self            => self.StandardCharacterPPUReadByte();
-    private Func<BULLCART, ushort, byte> CharacterReadByteTask    = (self, address) => self.StandardCharacterReadByte(address);
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte SmallProgramCPUReadByte() => System.Address switch {
-        < 0x8000                           => (byte)(System.Address >> 8),
-        _                                  => ProgramROM[System.Address & (ProgramROM.Length - 1)]
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte StandardProgramCPUReadByte() => System.Address switch {
-        < 0x8000 => (byte)(System.Address >> 8),
-        _        => ProgramROM[System.Address - 0x8000]
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte SmallCharacterPPUReadByte() => System.PPU.Registers.Address switch {
-        < 0x8000 => CharacterROM[System.PPU.Registers.Address & (CharacterROM.Length - 1)],
-        _        => throw new ArgumentOutOfRangeException()
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte StandardCharacterPPUReadByte() => System.PPU.Registers.Address switch {
-        < 0x8000 => CharacterROM[System.PPU.Registers.Address],
-        _        => throw new ArgumentOutOfRangeException()
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte SmallProgramReadByte(ushort address) => address switch {
-        < 0x8000 => (byte)(address >> 8),
-        _        => ProgramROM[address & (ProgramROM.Length - 1)]
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte StandardProgramReadByte(ushort address) => address switch {
-        < 0x8000 => (byte)(address >> 8),
-        _        => ProgramROM[address - 0x8000]
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte SmallCharacterReadByte(ushort address) => address switch {
-        < 0x8000 => (byte)(address >> 8),
-        _        => CharacterROM[address & (CharacterROM.Length - 1)]
-    };
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte StandardCharacterReadByte(ushort address) => address switch {
-        < 0x8000 => (byte)(address >> 8),
-        _        => CharacterROM[address - 0x8000]
-    };
-    #endregion CPUReadByte
 }

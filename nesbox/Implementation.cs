@@ -11,7 +11,7 @@ namespace nesbox;
  */
 
 
-internal static class Implementation {
+public static class Implementation {
     internal static void Initialize(ref API.Implementation.ImplHandshake binds, EList<string> args) {
         API.Implementation.SetupSimple(ref binds);
         API.Implementation.SetupIO<IO.StandardController_NTSCU, IO.StandardController_NTSCU>();

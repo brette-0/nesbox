@@ -136,11 +136,16 @@ internal static class Program {
         Audio.Initialize(); if (System.Quit) {
             return;
         }
+        // RAM must be initialised BEFORE the emu thread is spawned, otherwise
+        // there's a race: the CPU starts executing (reading SystemRAM as zeros
+        // since the array is zero-init) while the main thread is mid-randomise.
+        // Real hardware presents whatever random state is in RAM from the
+        // moment power is applied — that means before the CPU's first read.
+        System.Memory.Initialize(_memoryInit);
+
         System.Initialize(); if (System.Quit) {
             return;
         }
-
-        System.Memory.Initialize(_memoryInit);
         
         while (!System.Quit) {
             var didWork = Debug.Debugger.PumpAsync().GetAwaiter().GetResult();
@@ -156,6 +161,7 @@ internal static class Program {
     internal static float                    AudioVolume = 1f;
     internal static API.Audio.IEnhancedAudio AudioProcessor { get; private set; } = null!;
     internal static API.ICartridge           Cartridge      { get; private set; } = null!;
+    internal static API.Graphics.Shader      Shader         { get => _shader; }
     internal static API.IIO?                  Controller1;
     internal static API.IIO?                  Controller2;
     internal static bool                     isFamicom;
