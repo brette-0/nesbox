@@ -62,8 +62,9 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
     IDictionary<nint, API.Debugging.ILine> API.Debugging.IDebugFile.Lines => _lines;
     IReadOnlyList<API.Debugging.ISpan>     API.Debugging.IDebugFile.Spans => _spans;
 
-    private readonly Dictionary<nint, API.Debugging.ILine> _lines = [];
-    private readonly List<API.Debugging.ISpan>             _spans = [];
+    private readonly Dictionary<nint, API.Debugging.ILine> _lines        = [];
+    private readonly List<API.Debugging.ISpan>             _spans        = [];
+    internal readonly SortedSet<nint>                      SequenceEnds  = [];
 
     // ---------- Symbol tables (mirrors Ld65Dbg shape) ----------
 
@@ -164,17 +165,26 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
 
         // ── .debug_line → _lines ────────────────────────────────────────────
         if (sLine is { } sl) {
-            try {
-                ParseDebugLine(
-                    bytes,
-                    sl,
-                    sDebugStr,
-                    sDebugLineStr,
-                    elfDir);
-                Console.WriteLine($"[ELF] {_lines.Count} line records");
-            } catch (Exception ex) {
-                Console.WriteLine($"[ELF] .debug_line parse error: {ex.Message}");
+            ParseDebugLine(
+                bytes,
+                sl,
+                sDebugStr,
+                sDebugLineStr,
+                elfDir);
+
+            // Summarise the line table by file so missing CUs are obvious.
+            var byFile = new Dictionary<string, (int count, long lo, long hi)>();
+            foreach (var kv in _lines) {
+                var fn = Path.GetFileName(kv.Value.fp);
+                if (!byFile.TryGetValue(fn, out var prev))
+                    prev = (0, long.MaxValue, long.MinValue);
+                byFile[fn] = (prev.count + 1,
+                    Math.Min(prev.lo, (long)kv.Key),
+                    Math.Max(prev.hi, (long)kv.Key));
             }
+            Console.WriteLine($"[ELF] {_lines.Count} line records across {byFile.Count} files:");
+            foreach (var (fn, (cnt, lo, hi)) in byFile)
+                Console.WriteLine($"       {fn}: {cnt} lines  ${lo:X4}–${hi:X4}");
         } else {
             Console.WriteLine("[ELF] No .debug_line — no source-level stepping");
         }
@@ -375,14 +385,13 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
         int end = (int)(sLine.Offset + sLine.Size);
 
         while (p < end) {
-            int unitStart = p;
-
             // unit_length: 32-bit, or 0xFFFFFFFF + 64-bit (DWARF64 — rare, unsupported).
             uint unitLen32 = ReadU32(bytes, p); p += 4;
             if (unitLen32 == 0xFFFFFFFFu)
                 throw new FormatException(".debug_line is DWARF64 — unsupported");
             int unitEnd = p + (int)unitLen32;
 
+            try {
             ushort version = ReadU16(bytes, p); p += 2;
 
             byte addressSize = 4;   // default for DWARF<5
@@ -420,7 +429,7 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
                 p++; // skip terminating NUL
 
                 // file_names: NUL-terminated name + ULEB dir + ULEB mtime + ULEB size, ends with NUL.
-                var fileList = new List<(string, int)> { ("", 0) };  // index 0 unused
+                var fileList = new List<(string, int)> { ("", 0) };  // index 0 unused in v3/v4
                 while (p < prologueEnd && bytes[p] != 0) {
                     var name = ReadCString(bytes, p);
                     p += name.Length + 1;
@@ -443,15 +452,19 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
             p = prologueEnd;
 
             // ── State machine ──────────────────────────────────────────────
+            // DWARF v5: file indices are 0-based, initial file is 0.
+            // DWARF v3/v4: file indices are 1-based, initial file is 1;
+            //              index 0 is a dummy ("", 0) we added above.
             long address    = 0;
             int  opIndex    = 0;
-            int  fileIdx    = 1;
+            int  fileIdx    = version >= 5 ? 0 : 1;
             int  lineNo     = 1;
             bool isStmt     = defaultIsStmt != 0;
             bool endSeq     = false;
 
             void EmitRow() {
-                if (fileIdx <= 0 || fileIdx >= files.Length) return;
+                if (lineNo < 0) return;
+                if (fileIdx < 0 || fileIdx >= files.Length) return;
                 var (fname, dirIdx) = files[fileIdx];
                 if (string.IsNullOrEmpty(fname)) return;
 
@@ -460,6 +473,8 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
 
                 _lines.TryAdd((nint)(int)address, new LineImpl(full, lineNo));
             }
+
+            int initFileIdx = fileIdx;
 
             while (p < unitEnd) {
                 byte op = bytes[p++];
@@ -473,10 +488,8 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
 
                     switch (sub) {
                         case 1: // DW_LNE_end_sequence
-                            endSeq = true;
-                            EmitRow();
-                            // Reset state for next sequence.
-                            address = 0; opIndex = 0; fileIdx = 1; lineNo = 1;
+                            SequenceEnds.Add((nint)(int)address);
+                            address = 0; opIndex = 0; fileIdx = initFileIdx; lineNo = 1;
                             isStmt = defaultIsStmt != 0; endSeq = false;
                             break;
 
@@ -562,6 +575,10 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
                     lineNo  += lineBase + (adjusted % lineRange);
                     EmitRow();
                 }
+            }
+
+            } catch (Exception ex) {
+                Console.WriteLine($"[ELF] .debug_line CU parse error (skipping): {ex.Message}");
             }
 
             p = unitEnd;
@@ -680,7 +697,6 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
     // ══════════════════════════════════════════════════════════════════════════
 
     private static string ResolveSourcePath(string dir, string file, string elfDir) {
-        // Normalise separators.
         string raw = string.IsNullOrEmpty(dir)
             ? file
             : Path.Combine(dir, file);
@@ -688,14 +704,21 @@ public sealed class LlvmMosElf : API.Debugging.IDebugFile {
 
         if (Path.IsPathRooted(raw) && File.Exists(raw)) return Path.GetFullPath(raw);
 
+        // Build candidate relative paths from most-specific to least-specific.
+        // Handles cross-compiled ELFs where DWARF contains absolute paths from
+        // the build machine (e.g. /home/user/project/src/main.c on a Windows host).
+        var segments = raw.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+
         var probe = elfDir;
         while (probe is not null) {
-            var candidate = Path.GetFullPath(Path.Combine(probe, raw));
-            if (File.Exists(candidate)) return candidate;
+            for (int skip = 0; skip < segments.Length; skip++) {
+                var rel       = string.Join(Path.DirectorySeparatorChar, segments[skip..]);
+                var candidate = Path.GetFullPath(Path.Combine(probe, rel));
+                if (File.Exists(candidate)) return candidate;
+            }
             probe = Path.GetDirectoryName(probe);
         }
 
-        // Fall back to absolute-as-is or elfDir-relative.
         return Path.IsPathRooted(raw) ? raw : Path.GetFullPath(Path.Combine(elfDir, raw));
     }
 

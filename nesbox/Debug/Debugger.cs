@@ -134,6 +134,14 @@ public static class Debugger {
         foreach (var kv in debugFile.Lines)
             SourceCodeReferences.TryAdd(kv.Key, new SourceAddress(kv.Value.fp, kv.Value.line));
 
+        _sortedLineAddresses = SourceCodeReferences.Keys.ToArray();
+        Array.Sort(_sortedLineAddresses);
+
+        if (debugFile is LlvmMosElf elf) {
+            _sequenceEnds = elf.SequenceEnds.ToArray();
+            Console.WriteLine($"[DAP] {_sequenceEnds.Length} DWARF sequence boundaries");
+        }
+
         Console.WriteLine($"[DAP] Mapped {SourceCodeReferences.Count} source lines");
 
         _listener   = new TcpListener(IPAddress.Loopback, DapPort);
@@ -197,7 +205,11 @@ public static class Debugger {
     // -----------------------------------------------------------------------
 
     internal static async Task StepOnceAsync() {
-        StepInstruction();
+        var startLine = _currentLineNumber;
+        do {
+            StepInstruction();
+            RefreshSourceLocation();
+        } while (_currentLineNumber == startLine);
         Renderer.Present();
         await WriteStoppedEventAsync("step");
     }
@@ -219,52 +231,94 @@ public static class Debugger {
     }
 
     internal static async Task StepOverAsync() {
-        if (System.Register.IR is 0x20 /* jsr */) {
-            _lastSp = System.Register.S;
-            while (System.Register.S != _lastSp) {
-                if (StepCheckBreak()) return;
-            }
-        } else if (_lastLineNumber > _currentLineNumber) {
-            while (_lastLineNumber < _currentLineNumber) {
-                if (StepCheckBreak()) return;
-            }
+        if (CpuPeek(System.PC) is 0x20 /* JSR abs */) {
+            var savedSp = System.Register.S;
+            do {
+                if (StepInstructionAndCheckBreak()) return;
+            } while (System.Register.S != savedSp);
         } else {
-            StepCheckBreak();
+            var startLine = _currentLineNumber;
+            do {
+                if (StepInstructionAndCheckBreak()) return;
+            } while (_currentLineNumber == startLine);
         }
+        RefreshSourceLocation();
         Renderer.Present();
         await WriteStoppedEventAsync("step");
     }
 
-    private static bool StepCheckBreak() {
-        StepCycle();
-        bool hit;
+    private static bool StepInstructionAndCheckBreak() {
+        StepInstruction();
+        RefreshSourceLocation();
         lock (_breakPointLock) {
             var bp = BreakPoints.Find(t => t!.Value.pos == _currentLineNumber);
-            if (bp is null) {
-                hit = false;
-            } else if (bp.Value.expr is null) {
-                hit = true;
-            } else {
-                hit = EvalCondition(bp.Value.expr, _currentRomAddress);
+            if (bp is null) return false;
+            bool hit = bp.Value.expr is null || EvalCondition(bp.Value.expr, _currentRomAddress);
+            if (hit) {
+                _pendingStop = "breakpoint";
+                Renderer.Present();
             }
+            return hit;
         }
-        if (hit) {
-            _pendingStop = "breakpoint";
-            Renderer.Present();
-        }
-        return hit;
     }
 
-    // Advance the emulator by exactly one CPU cycle.
     private static void StepCycle() {
-        if (System.cycle is 0) {
-            _lastLineNumber    = _currentLineNumber;
-            _currentRomAddress = Program.Cartridge.GetROMLocation(System.PC);
-            if (SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa))
-                _currentLineNumber = sa.line;
-        }
+        if (System.cycle is 0) RefreshSourceLocation();
         System.Step();
         ++System.virtualTime;
+    }
+
+    // Sync _currentRomAddress / _currentLineNumber with the current PC.
+    //
+    // DWARF line entries define ranges: each entry covers from its address up
+    // to the next entry's address.  When the PC has no exact entry we use
+    // floor lookup (largest entry address <= PC) — standard debugger behaviour.
+    //
+    // A floor hit is invalid if a DWARF end_sequence boundary sits between the
+    // floor entry and the PC, because that means we crossed into a different
+    // code sequence (typically a function prologue).  In that case we leave
+    // _currentLineNumber unchanged so the step-until-line-changes loop in
+    // StepOnceAsync keeps advancing.
+    private static void RefreshSourceLocation() {
+        _currentRomAddress = Program.Cartridge.GetROMLocation(System.PC);
+        if (SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa)) {
+            if (sa.line > 0) _currentLineNumber = sa.line;
+            return;
+        }
+        var floor = FloorLookup(_currentRomAddress);
+        if (floor is not null
+            && !HasSequenceBoundaryBetween(floor.Value, _currentRomAddress)
+            && SourceCodeReferences.TryGetValue(floor.Value, out sa)
+            && sa.line > 0) {
+            _currentLineNumber = sa.line;
+        }
+    }
+
+    // Binary-search for the largest entry <= addr.
+    private static nint? FloorLookup(nint addr) {
+        var arr = _sortedLineAddresses;
+        if (arr.Length == 0) return null;
+        int lo = 0, hi = arr.Length - 1;
+        if (addr < arr[lo]) return null;
+        while (lo < hi) {
+            int mid = lo + (hi - lo + 1) / 2;
+            if (arr[mid] > addr) hi = mid - 1; else lo = mid;
+        }
+        return arr[lo];
+    }
+
+    // Returns true if any DWARF end_sequence address falls in (floor, addr].
+    // This means the floor entry and addr are in different code sequences.
+    private static bool HasSequenceBoundaryBetween(nint floor, nint addr) {
+        var ends = _sequenceEnds;
+        if (ends.Length == 0) return false;
+        int lo = 0, hi = ends.Length - 1;
+        // Find the smallest end_sequence > floor.
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (ends[mid] <= floor) lo = mid + 1; else hi = mid;
+        }
+        return lo < ends.Length && ends[lo] > floor && ends[lo] <= addr;
     }
 
     // -----------------------------------------------------------------------
@@ -422,33 +476,58 @@ public static class Debugger {
                 break;
 
             case "stackTrace": {
-                SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa);
-                var fileName = IO.Path.GetFileName(sa.fp);
+                string? srcFp   = null;
+                int     srcLine = 0;
 
-                // Resolve the full path for the source file:
-                // 1. Use whatever full path the IDE already told us (from setBreakpoints).
-                // 2. Otherwise combine SourceRoot with the (possibly relative) path from the .dbg file.
-                // 3. Fall back to the raw fp string if all else fails.
-                string fullPath;
-                if (_idePaths.TryGetValue(fileName, out var ip)) {
-                    fullPath = ip;
-                } else if (!string.IsNullOrEmpty(SourceRoot) && !IO.Path.IsPathRooted(sa.fp)) {
-                    var candidate = IO.Path.GetFullPath(IO.Path.Combine(SourceRoot, sa.fp));
-                    fullPath = IO.File.Exists(candidate) ? candidate : sa.fp;
+                if (SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa) && sa.line > 0) {
+                    srcFp   = sa.fp;
+                    srcLine = sa.line;
                 } else {
-                    fullPath = sa.fp;
+                    var floor = FloorLookup(_currentRomAddress);
+                    if (floor is not null
+                        && !HasSequenceBoundaryBetween(floor.Value, _currentRomAddress)
+                        && SourceCodeReferences.TryGetValue(floor.Value, out sa)
+                        && sa.line > 0) {
+                        srcFp   = sa.fp;
+                        srcLine = sa.line;
+                    }
                 }
+
+                var fileName = srcFp is not null ? IO.Path.GetFileName(srcFp) : null;
+
+                // Resolve the full path for the source file.
+                // Priority: IDE-provided path > SourceRoot-based > raw from debug info.
+                // For paths the IDE hasn't seen (no breakpoints set in that file),
+                // walk up from SourceRoot trying progressively shorter suffixes so
+                // we find the file even when DWARF recorded a path from a different
+                // build environment.
+                string? fullPath;
+                if (fileName is not null && _idePaths.TryGetValue(fileName, out var ip)) {
+                    fullPath = ip;
+                } else if (srcFp is not null) {
+                    fullPath = ResolvePathAtRuntime(srcFp);
+                } else {
+                    fullPath = null;
+                }
+
+                if (srcFp is not null)
+                    Console.WriteLine(
+                        $"[DAP] stackTrace: srcFp={srcFp} → fullPath={fullPath ?? "(null)"}" +
+                        (fullPath is not null && IO.File.Exists(fullPath) ? " [exists]" : " [MISSING]"));
+
                 await WriteRawResponseAsync(msg, BuildJson(w => {
                     w.WriteStartArray("stackFrames");
                     w.WriteStartObject();
                     w.WriteNumber("id",     1);
                     w.WriteString("name",   $"${System.PC:X4}");
-                    w.WriteNumber("line",   sa.line);
+                    w.WriteNumber("line",   srcLine);
                     w.WriteNumber("column", 1);
-                    w.WriteStartObject("source");
-                    w.WriteString("name",   fileName);
-                    w.WriteString("path",   fullPath);
-                    w.WriteEndObject();
+                    if (fullPath is not null) {
+                        w.WriteStartObject("source");
+                        w.WriteString("name",   fileName ?? IO.Path.GetFileName(fullPath));
+                        w.WriteString("path",   fullPath);
+                        w.WriteEndObject();
+                    }
                     w.WriteEndObject();
                     w.WriteEndArray();
                     w.WriteNumber("totalFrames", 1);
@@ -833,6 +912,51 @@ public static class Debugger {
         return string.Empty;
     }
 
+    // Aggressive runtime path resolution.  Handles three scenarios:
+    //   1. The path from the debug file is already absolute and exists.
+    //   2. The path is relative (possibly with ..) — resolve against SourceRoot.
+    //   3. The path references a file compiled elsewhere (cross-compiled lib,
+    //      different machine) — strip path prefixes and search upward.
+    private static string ResolvePathAtRuntime(string srcFp) {
+        if (IO.Path.IsPathRooted(srcFp) && IO.File.Exists(srcFp))
+            return srcFp;
+
+        // Try direct resolution against SourceRoot (handles ../ correctly).
+        if (!string.IsNullOrEmpty(SourceRoot) && !IO.Path.IsPathRooted(srcFp)) {
+            var direct = IO.Path.GetFullPath(IO.Path.Combine(SourceRoot, srcFp));
+            if (IO.File.Exists(direct)) return direct;
+        }
+
+        // Suffix-based walk-up from SourceRoot: split into segments, try
+        // progressively shorter suffixes at each ancestor directory.
+        var segments = srcFp.Replace('\\', '/').Split('/',
+            StringSplitOptions.RemoveEmptyEntries);
+
+        // Remove . and .. segments for the suffix search — they only make
+        // sense relative to a specific base and would cause false negatives
+        // when combined with a different ancestor.
+        var clean = new List<string>(segments.Length);
+        foreach (var s in segments)
+            if (s is not "." and not "..") clean.Add(s);
+        if (clean.Count == 0) return srcFp;
+
+        var probe = !string.IsNullOrEmpty(SourceRoot) ? SourceRoot : IO.Directory.GetCurrentDirectory();
+        while (probe is not null) {
+            for (int skip = 0; skip < clean.Count; skip++) {
+                var rel       = string.Join(IO.Path.DirectorySeparatorChar.ToString(),
+                                    clean.GetRange(skip, clean.Count - skip));
+                var candidate = IO.Path.GetFullPath(IO.Path.Combine(probe, rel));
+                if (IO.File.Exists(candidate)) return candidate;
+            }
+            probe = IO.Path.GetDirectoryName(probe);
+        }
+
+        // Nothing found — return the best guess (SourceRoot-relative or raw).
+        if (!string.IsNullOrEmpty(SourceRoot) && !IO.Path.IsPathRooted(srcFp))
+            return IO.Path.GetFullPath(IO.Path.Combine(SourceRoot, srcFp));
+        return srcFp;
+    }
+
     private static void Disconnect() {
         try { _stream?.Close(); } catch { /* ignored */ }
         _stream = null;
@@ -846,10 +970,10 @@ public static class Debugger {
     private static readonly object                                  _breakPointLock      = new();
     private static readonly Dictionary<nint, SourceAddress>        SourceCodeReferences = [];
     private static readonly Dictionary<string, string>             _idePaths            = [];
-    private static          int                                     _lastLineNumber;
     private static          int                                     _currentLineNumber;
     private static          nint                                    _currentRomAddress;
-    private static          byte                                    _lastSp;
+    private static          nint[]                                  _sortedLineAddresses = [];
+    private static          nint[]                                  _sequenceEnds        = [];
 
     private static TcpListener?     _listener;
     private static Task<TcpClient>? _acceptTask;
