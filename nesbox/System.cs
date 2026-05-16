@@ -8,48 +8,365 @@ namespace nesbox;
 internal static class System {
     internal static class PPU {
         // TODO: Add OAM DMA for DMC DMA to interrupt it
-        
-        private const ulong DOTS_PER_SCANLINE = 341;
-        private const ulong VBLANK_SET_DOT    = 241 * DOTS_PER_SCANLINE + 1; // 82182
-        private const ulong VBLANK_CLEAR_DOT  = 261 * DOTS_PER_SCANLINE + 1; // 89002
-        
+
+        private const int DOTS_PER_LINE  = 341;
+        private const int LINES_PER_FRAME = 262;
+
         // NTSC PPU suppresses VBlank for ~29658 CPU cycles after reset.
         // 29658 CPU cycles × 3 PPU dots/cycle = 88974 PPU dots.
-        // First VBLANK_SET_DOT at dot 82182 is suppressed (82182 < 88974).
-        // Second VBLANK_SET_DOT at dot 171524 goes through (171524 > 88974).
         internal const ulong  WARMUP_DOTS = 29658 * 3; // 88974
         internal static ulong warmupEndDot;
-        
+
+        internal static int _dot;
+        internal static int _line;
+        private static bool _oddFrame;
+        internal static bool FrameComplete;
+
+        // ── Background shift registers & latches ──────────────────────
+        private static ushort bgShiftLo;
+        private static ushort bgShiftHi;
+        private static ushort bgAttrShiftLo;
+        private static ushort bgAttrShiftHi;
+        private static byte   ntByte;
+        private static byte   atByte;
+        private static byte   ptLo;
+        private static byte   ptHi;
+
+        // ── Sprite evaluation & rendering state ──────────────────────
+        private static byte[]  secondaryOAM     = new byte[32];  // 8 sprites × 4 bytes
+        private static byte[]  sprShiftLo       = new byte[8];
+        private static byte[]  sprShiftHi       = new byte[8];
+        private static byte[]  sprAttr          = new byte[8];
+        private static byte[]  sprXCounter      = new byte[8];
+        private static int     spriteCount;
+        private static bool[]  spriteIsZero     = new bool[8];
+
+        private static bool RenderingEnabled =>
+            (PPUMASK & 0x18) is not 0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void IncrementCoarseX() {
+            if ((v & 0x001F) == 31) {
+                v &= unchecked((ushort)~0x001F);
+                v ^= 0x0400;
+            } else {
+                v++;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void IncrementFineY() {
+            if ((v & 0x7000) != 0x7000) {
+                v += 0x1000;
+            } else {
+                v &= unchecked((ushort)~0x7000);
+                var coarseY = (v & 0x03E0) >> 5;
+                if (coarseY == 29) {
+                    coarseY = 0;
+                    v ^= 0x0800;
+                } else if (coarseY == 31) {
+                    coarseY = 0;
+                } else {
+                    coarseY++;
+                }
+                v = (ushort)((v & ~0x03E0) | (coarseY << 5));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void CopyHorizontalBits() {
+            v = (ushort)((v & ~0x041F) | (tempVRAMAddr & 0x041F));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void CopyVerticalBits() {
+            v = (ushort)((v & ~0x7BE0) | (tempVRAMAddr & 0x7BE0));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void LoadBGShifters() {
+            bgShiftLo = (ushort)((bgShiftLo & 0xFF00) | ptLo);
+            bgShiftHi = (ushort)((bgShiftHi & 0xFF00) | ptHi);
+
+            bgAttrShiftLo = (ushort)((bgAttrShiftLo & 0xFF00) | ((atByte & 0x01) != 0 ? 0xFF : 0x00));
+            bgAttrShiftHi = (ushort)((bgAttrShiftHi & 0xFF00) | ((atByte & 0x02) != 0 ? 0xFF : 0x00));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void FetchNT() {
+            var addr = (ushort)(0x2000 | (v & 0x0FFF));
+            ntByte = ReadVRAM(addr);
+            // fetch NT diag disabled
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void FetchAT() {
+            var atAddr = (ushort)(0x23C0 | (v & 0x0C00)
+                         | ((v >> 4) & 0x38)
+                         | ((v >> 2) & 0x07));
+            var raw = ReadVRAM(atAddr);
+            var shift = ((v >> 4) & 0x04) | (v & 0x02);
+            atByte = (byte)((raw >> shift) & 0x03);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void FetchPTLo() {
+            var baseAddr = (PPUCTRL & 0x10) != 0 ? 0x1000 : 0x0000;
+            var fineY    = (v >> 12) & 0x07;
+            var addr     = (ushort)(baseAddr + ntByte * 16 + fineY);
+            Registers.Address = addr;
+            ptLo = Program.Cartridge.PPUReadByte();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void FetchPTHi() {
+            var baseAddr = (PPUCTRL & 0x10) != 0 ? 0x1000 : 0x0000;
+            var fineY    = (v >> 12) & 0x07;
+            var addr     = (ushort)(baseAddr + ntByte * 16 + fineY + 8);
+            Registers.Address = addr;
+            ptHi = Program.Cartridge.PPUReadByte();
+        }
+
+        private static void EvaluateSprites(int nextLine) {
+            spriteCount = 0;
+            for (int i = 0; i < 8; i++) spriteIsZero[i] = false;
+
+            var spriteHeight = (PPUCTRL & 0x20) != 0 ? 16 : 8;
+            var overflowFound = false;
+
+            for (int n = 0; n < 64; n++) {
+                var yPos = OAMBuffer[n * 4];
+                var top  = (yPos + 1) & 0xFF;
+                var diff = nextLine - top;
+                if (diff < 0 || diff >= spriteHeight) continue;
+
+                if (spriteCount < 8) {
+                    secondaryOAM[spriteCount * 4 + 0] = OAMBuffer[n * 4 + 0];
+                    secondaryOAM[spriteCount * 4 + 1] = OAMBuffer[n * 4 + 1];
+                    secondaryOAM[spriteCount * 4 + 2] = OAMBuffer[n * 4 + 2];
+                    secondaryOAM[spriteCount * 4 + 3] = OAMBuffer[n * 4 + 3];
+                    if (n == 0) spriteIsZero[spriteCount] = true;
+                    spriteCount++;
+                } else {
+                    spriteOverflow = true;
+                    break;
+                }
+            }
+        }
+
+        private static void LoadSpriteShifters(int nextLine) {
+            var spriteHeight = (PPUCTRL & 0x20) != 0 ? 16 : 8;
+
+            for (int i = 0; i < 8; i++) {
+                if (i >= spriteCount) {
+                    sprShiftLo[i] = 0;
+                    sprShiftHi[i] = 0;
+                    sprAttr[i]    = 0;
+                    sprXCounter[i] = 0xFF;
+                    continue;
+                }
+
+                var yPos    = secondaryOAM[i * 4 + 0];
+                var tileIdx = secondaryOAM[i * 4 + 1];
+                var attr    = secondaryOAM[i * 4 + 2];
+                var xPos    = secondaryOAM[i * 4 + 3];
+
+                sprAttr[i]    = attr;
+                sprXCounter[i] = xPos;
+
+                var flipV = (attr & 0x80) != 0;
+                var row   = nextLine - ((yPos + 1) & 0xFF);
+
+                ushort patAddr;
+                if (spriteHeight == 16) {
+                    var bank = (tileIdx & 0x01) != 0 ? 0x1000 : 0x0000;
+                    var tile = tileIdx & 0xFE;
+                    if (flipV) row = 15 - row;
+                    if (row >= 8) { tile++; row -= 8; }
+                    patAddr = (ushort)(bank + tile * 16 + row);
+                } else {
+                    var bank = (PPUCTRL & 0x08) != 0 ? 0x1000 : 0x0000;
+                    if (flipV) row = 7 - row;
+                    patAddr = (ushort)(bank + tileIdx * 16 + row);
+                }
+
+                Registers.Address = patAddr;
+                var lo = Program.Cartridge.PPUReadByte();
+                Registers.Address = (ushort)(patAddr + 8);
+                var hi = Program.Cartridge.PPUReadByte();
+
+                if ((attr & 0x40) != 0) {
+                    lo = ReverseByte(lo);
+                    hi = ReverseByte(hi);
+                }
+
+                sprShiftLo[i] = lo;
+                sprShiftHi[i] = hi;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte ReverseByte(byte b) {
+            b = (byte)(((b & 0xF0) >> 4) | ((b & 0x0F) << 4));
+            b = (byte)(((b & 0xCC) >> 2) | ((b & 0x33) << 2));
+            b = (byte)(((b & 0xAA) >> 1) | ((b & 0x55) << 1));
+            return b;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Step() {
-            var frameDot = virtualTime % DOTS_PER_FRAME;
-            var dot      = (int)(frameDot % DOTS_PER_SCANLINE);
-            var line     = (int)scanline;
+            var dot  = _dot;
+            var line = _line;
 
-            if (frameDot is 0) Video.ResetStream();
+            if (dot == 0 && line == 0) Video.ResetStream();
 
             var isVisible   = line < 240;
-            var isPreRender = line is 261;
+            var isPreRender = line == 261;
+            var isFetchLine = isVisible || isPreRender;
 
-            if (isPreRender && dot is 1) {
+            // ── Pre-render clear ─────────────────────────────────────
+            if (isPreRender && dot == 1) {
                 inVblank       = false;
                 nmiLine        = false;
                 spriteZeroHit  = false;
                 spriteOverflow = false;
             }
 
-            if (line is 241 && dot is 1 && virtualTime >= warmupEndDot) {
+            // ── VBlank set ───────────────────────────────────────────
+            if (line == 241 && dot == 1 && virtualTime >= warmupEndDot) {
                 inVblank = true;
                 EdgeDetectNMI();
             }
 
-            if (isVisible && dot >= 1 && dot <= 256) {
+            // ── Rendering ────────────────────────────────────────────
+            if (RenderingEnabled && isFetchLine) {
+
+                // ─── Visible pixel output (dots 1-256, visible lines) ───
+                if (isVisible && dot >= 1 && dot <= 256) {
+
+                    // ── Background pixel ──
+                    byte bgPixel = 0;
+                    byte bgPal   = 0;
+
+                    if ((PPUMASK & 0x08) != 0) {
+                        if ((PPUMASK & 0x02) != 0 || dot > 8) {
+                            var mux    = (ushort)(0x8000 >> fineX);
+                            bgPixel = (byte)(
+                                ((bgShiftLo & mux) != 0 ? 1 : 0) |
+                                ((bgShiftHi & mux) != 0 ? 2 : 0));
+                            bgPal = (byte)(
+                                ((bgAttrShiftLo & mux) != 0 ? 1 : 0) |
+                                ((bgAttrShiftHi & mux) != 0 ? 2 : 0));
+                        }
+                    }
+
+                    // ── Sprite pixel (screen-relative, never affected by scroll) ──
+                    byte sprPixel  = 0;
+                    byte sprPal    = 0;
+                    byte sprPri    = 0;
+                    bool isSprZero = false;
+
+                    if ((PPUMASK & 0x10) != 0) {
+                        var screenX = dot - 1;
+                        for (int i = 0; i < spriteCount; i++) {
+                            int offset = screenX - sprXCounter[i];
+                            if ((uint)offset > 7) continue;
+
+                            if ((PPUMASK & 0x04) == 0 && dot <= 8) continue;
+
+                            var px = (byte)(
+                                ((sprShiftLo[i] >> (7 - offset)) & 1) |
+                                (((sprShiftHi[i] >> (7 - offset)) & 1) << 1));
+                            if (px == 0) continue;
+
+                            sprPixel   = px;
+                            sprPal     = (byte)((sprAttr[i] & 0x03) + 4);
+                            sprPri     = (byte)((sprAttr[i] >> 5) & 1);
+                            isSprZero  = spriteIsZero[i];
+                            break;
+                        }
+                    }
+
+                    // ── Sprite zero hit ──
+                    if (isSprZero && bgPixel != 0 && sprPixel != 0
+                        && dot >= 2 && dot < 256) {
+                        spriteZeroHit = true;
+                    }
+
+                    // ── Priority multiplexer ──
+                    byte muxOutput;
+                    if (bgPixel == 0 && sprPixel == 0)
+                        muxOutput = 0;
+                    else if (bgPixel == 0)
+                        muxOutput = (byte)((sprPal << 2) | sprPixel);
+                    else if (sprPixel == 0)
+                        muxOutput = (byte)((bgPal << 2) | bgPixel);
+                    else
+                        muxOutput = sprPri != 0
+                            ? (byte)((bgPal << 2) | bgPixel)
+                            : (byte)((sprPal << 2) | sprPixel);
+
+                    // Diagnostic: dump scanline with content
+                    // pixel diag disabled for AT analysis
+                    Video.Emit(muxOutput);
+                }
+
+                // ─── BG shift register clock (dots 1-256 and 321-336) ───
+                if ((dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336)) {
+                    bgShiftLo     <<= 1;
+                    bgShiftHi     <<= 1;
+                    bgAttrShiftLo <<= 1;
+                    bgAttrShiftHi <<= 1;
+
+                    switch ((dot - 1) & 0x07) {
+                        case 1: FetchNT(); break;
+                        case 3: FetchAT(); break;
+                        case 5: FetchPTLo(); break;
+                        case 7:
+                            FetchPTHi();
+                            LoadBGShifters();
+                            IncrementCoarseX();
+                            break;
+                    }
+                }
+
+                // ─── Y increment at end of visible portion ───
+                if (dot == 256) IncrementFineY();
+
+                // ─── Horizontal scroll reload + sprite eval ───
+                if (dot == 257) {
+                    CopyHorizontalBits();
+                    if (isVisible || isPreRender) {
+                        var nextLine = isPreRender ? 0 : line + 1;
+                        EvaluateSprites(nextLine);
+                        LoadSpriteShifters(nextLine);
+                    }
+                }
+
+                // ─── Vertical scroll reload (pre-render only) ───
+                if (isPreRender && dot >= 280 && dot <= 304) {
+                    CopyVerticalBits();
+                }
+
+            } else if (isVisible && dot >= 1 && dot <= 256) {
+                // Rendering disabled — emit backdrop
                 Video.Emit(0);
             }
 
-            if (dot is 340) {
-                scanline++;
-                if (scanline >= 262) scanline = 0;
+            // ── Advance dot/line counters ────────────────────────────
+            // Odd-frame skip: when rendering is enabled on odd frames,
+            // the pre-render line is 340 dots (0-339) instead of 341
+            // (0-340). This keeps even+odd = 178683 dots, perfectly
+            // divisible by the 3:1 PPU:CPU ratio.
+            var lineLen = (isPreRender && _oddFrame && RenderingEnabled)
+                          ? 340 : DOTS_PER_LINE;
+            if (++_dot >= lineLen) {
+                _dot = 0;
+                if (++_line >= LINES_PER_FRAME) {
+                    _line = 0;
+                    _oddFrame = !_oddFrame;
+                    FrameComplete = true;
+                }
             }
         }
 
@@ -470,8 +787,6 @@ internal static class System {
         // ---- PPUSTATUS bits ----
         internal static bool   spriteZeroHit;
         internal static bool   spriteOverflow;
-
-        private static ushort scanline;
 
         private static bool dmaAlign;
         private static byte dmaLatch;
@@ -1339,7 +1654,9 @@ internal static class System {
         double worstLateMs = 0;
 
         var untilNextSample = 1d / SamplingFrequency;
-        
+        var secondsPerDot   = 1d / dotsPerSecond;
+        int cpuDiv = 2;
+
         DoNotProgress:
         while (!Quit) {
             if (Debug.Debugger.debugging) {
@@ -1349,21 +1666,23 @@ internal static class System {
             } else {
                 PPU.Step();
                 Link.TriggerClockDrivenImplementations();
-                if (virtualTime % 3 is 0) {
+                if (++cpuDiv >= 3) {
+                    cpuDiv = 0;
                     Step();
                     APU.Step();
                     PPU.OAM.DMA();
                     if (Quit) return;
                 }
 
-                if ((untilNextSample -= 1d / dotsPerSecond) <= 0d) {
+                if ((untilNextSample -= secondsPerDot) <= 0d) {
                     untilNextSample  += 1d / SamplingFrequency;
-                    SampleBuffer.Add(Program.AudioVolume * 
+                    SampleBuffer.Add(Program.AudioVolume *
                                      Program.AudioProcessor.PostProcessSample(APU.GetPCMSample()));
                 }
             }
 
-            if (virtualTime % DOTS_PER_FRAME is 0) {
+            if (PPU.FrameComplete) {
+                PPU.FrameComplete = false;
                 // Publish the just-finished frame to the renderer thread and
                 // drain audio. These are independent of pacing — they must
                 // happen every frame regardless of Throttle, otherwise we
@@ -1467,7 +1786,7 @@ internal static class System {
             FetchInstruction:
             AD          = PC;
             DriveAddressPins();
-            
+
             Memory.CPU_Read();
             PC++;
             Register.IR = Data;
@@ -1559,18 +1878,24 @@ internal static class System {
                 DriveAddressPins();
                 Memory.CPU_Read();
                 return;
-            
+
             case 1:
+                AD        = PC;
+                DriveAddressPins();
+                Memory.CPU_Read();
+                break;
+
+            case 2:
                 Data = PCH;
                 Memory.Push();
                 break;
-            
-            case 2:
+
+            case 3:
                 Data = PCL;
                 Memory.Push();
                 break;
-            
-            case 3:
+
+            case 4:
                 Data =
                     (byte)((Register.c ? 1 : 0) << 0 |
                            (Register.z ? 1 : 0) << 1 |
@@ -1583,16 +1908,16 @@ internal static class System {
                 Memory.Push();
                 Register.i = true;
                 break;
-            
-            case 4:
+
+            case 5:
                 AD = Vector;
                 DriveAddressPins();
                 Memory.CPU_Read();
                 DB  = Data;
                 PCL = DB;
                 break;
-            
-            case 5:
+
+            case 6:
                 AD = (ushort)(Vector + 1);
                 DriveAddressPins();
                 Memory.CPU_Read();
@@ -1612,7 +1937,8 @@ internal static class System {
     internal static bool   CPU_IRQ;
     internal static bool   NMIAsserted;
     private static  bool   Reset;
-    
+
+
     internal static Action OpHandle;
     internal static byte   cycle;
 

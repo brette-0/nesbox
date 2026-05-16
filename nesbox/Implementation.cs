@@ -17,7 +17,7 @@ public static class Implementation {
         API.Implementation.SetupIO<IO.StandardController_NTSCU, IO.StandardController_NTSCU>();
         API.Implementation.SetupDebug<Debug.LlvmMosElf>(ref args);
 
-        var cartridge = new Mappers.BULLCART(ref args);
+        var cartridge = new Mappers.NROM(ref args);
         binds.cartridge  = cartridge;
     }
 }

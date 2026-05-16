@@ -690,9 +690,24 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void PHA() {
-        Data = Register.AC;
-        Memory.Push();
-        cycle = 0xff;
+        switch (cycle) {
+            case 1:
+                AD = PC;
+                DriveAddressPins();
+                Memory.CPU_Read();
+                break;
+
+            case 2:
+                Data = Register.AC;
+                Memory.Push();
+                cycle = 0xff;
+                break;
+
+            default:
+                Console.WriteLine("[CPU] Performed PHA on incorrect cycle");
+                Quit = true;
+                break;
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -780,9 +795,32 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void PLA() {
-        Memory.Pull();
-        Register.AC = Data;
-        cycle       = 0xff;
+        switch (cycle) {
+            case 1:
+                AD = PC;
+                DriveAddressPins();
+                Memory.CPU_Read();
+                break;
+
+            case 2:
+                ADL = Register.S;
+                ADH = 0x01;
+                DriveAddressPins();
+                Memory.CPU_Read();
+                break;
+
+            case 3:
+                Memory.Pull();
+                Register.AC = Data;
+                NonArithmeticProcessorFlagSets(Register.AC);
+                cycle = 0xff;
+                break;
+
+            default:
+                Console.WriteLine("[CPU] Performed PLA on incorrect cycle");
+                Quit = true;
+                break;
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1414,14 +1452,14 @@ internal static class OpCodes {
         
         switch (cycle) {
             case 1:
-                Address = PC;
+                AD = PC;
                 DriveAddressPins();
                 Memory.CPU_Read();
-                
+
                 DB   = Data;
                 PC++;
                 break;
-            
+
             case 2:
                 ADL  = DB;
                 ADH  = 0x00;
@@ -1693,13 +1731,13 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void IndexedIndirect(Opcode op) {
         Action post = op.kind is RWKind.Read ? EndRead : EndRest;
-        
+
         switch (cycle) {
             case 1:
-                Address = PC;
+                AD = PC;
                 DriveAddressPins();
                 Memory.CPU_Read();
-                
+
                 DB   = Data;
                 PC++;
                 break;

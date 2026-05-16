@@ -3,8 +3,8 @@ using EList;
 using nesbox;
 namespace nesbox.Mappers;
 
-internal sealed class BULLCART : API.IFamicomCartridge {
-    public BULLCART(ref EList<string> args) {
+internal sealed class NROM : API.INESCartridge {
+    public NROM(ref EList<string> args) {
         var next = new EList<string>();
 
         while (args.MoveNext()) {
@@ -87,7 +87,7 @@ internal sealed class BULLCART : API.IFamicomCartridge {
     public void PPURead() { }
 
     public void PPUWrite() {
-        throw new NotImplementedException();
+        // CHR-ROM: writes are ignored (read-only)
     }
 
     public int GetROMLocation(ushort address) => address;
@@ -130,7 +130,6 @@ internal sealed class BULLCART : API.IFamicomCartridge {
     public byte[] ProgramROM   { get => __ProgramROM;   set => __ProgramROM = value; }
     public byte[] CharacterROM { get => __CharacterROM; set => __CharacterROM = value; }
     public bool   PPUA10_11(bool a10, bool _) => a10;
-    public float  ModifyAPUSignal(float signal) => signal;
 
     public void F_NT()    { }
     public void F_AT()    { }
