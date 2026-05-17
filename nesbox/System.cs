@@ -857,30 +857,29 @@ internal static class System {
 
             switch (++_frameCounter) {
                 case S1:
-                case S1 + S2:
+                case S3:
                     Pulse1.QuarterFrame();
                     Pulse2.QuarterFrame();
                     Triangle.QuarterFrame();
                     Noise.QuarterFrame();
                     break;
-                
+
                 case S2:
                     Pulse1.HalfFrame();
                     Pulse2.HalfFrame();
                     Triangle.HalfFrame();
                     Noise.HalfFrame();
                     goto case S1;
-                    
+
                 case S4:
                     if (UsingFiveStep) break;
                     _frameCounter = 0;
                     if (!IRQInhibit) FrameIRQAsserted = true;
                     goto case S2;
-                    
+
                case S5:
                    if (!UsingFiveStep) break;
                    _frameCounter = 0;
-                   if (!IRQInhibit) FrameIRQAsserted = true;
                    goto case S2;
             }
             
@@ -1176,7 +1175,7 @@ internal static class System {
             internal byte GetLevel() {
                 if (!enabled || Length is 0 || Timer < 8) return 0;
 
-                if (SweepEnable && Shift is not 0) {
+                if (Shift is not 0) {
                     var change = Timer >> Shift;
                     var target = Negate
                         ? this == Pulse1 ? (Timer - change - 1) : Timer - change
@@ -1184,7 +1183,7 @@ internal static class System {
 
                     if (target > 0x7ff) return 0;
                 }
-                
+
                 var dutyBit = (DutyTable[Duty] >> seq) & 1;
                 if (dutyBit is 0) return 0;
                 return ConstantVolume ? Volume : envDecay;
@@ -1424,10 +1423,11 @@ internal static class System {
         internal static bool UsingFiveStep;
         internal static bool IRQInhibit;
 
-        private const ushort S1 = 3729;
-        private const ushort S2 = 7457;
-        private const ushort S4 = 14915;
-        private const ushort S5 = 18641;
+        private const ushort S1 = 7457;
+        private const ushort S2 = 14913;
+        private const ushort S3 = 22371;
+        private const ushort S4 = 29829;
+        private const ushort S5 = 37281;
         
 
         

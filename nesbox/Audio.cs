@@ -10,19 +10,36 @@ internal static class Audio {
     // Allow up to 4 frames of latency (800 samples × 4 bytes × 4)
     private const int MaxQueueBytes = 12_800;
 
-    // First-order high-pass filter (AC coupling), ~20 Hz cutoff at 48 kHz.
-    // Removes DC offset just like the capacitor on real NES hardware.
-    // y[n] = alpha * (y[n-1] + x[n] - x[n-1])
-    private static float _hpfPrevIn;
-    private static float _hpfPrevOut;
-    private const  float HpfAlpha = 0.9974f; // RC/(RC+dt), RC=1/(2*pi*20), dt=1/48000
+    // NES output filter chain matching real hardware RC circuits:
+    // 1) High-pass ~37 Hz  (DAC coupling capacitor)
+    // 2) High-pass ~440 Hz (output coupling capacitor)
+    // 3) Low-pass  ~14 kHz (output RC filter — tames noise and square wave harmonics)
+
+    // HPF: y[n] = alpha * (y[n-1] + x[n] - x[n-1]),  alpha = RC/(RC+dt)
+    private static float _hpf1PrevIn, _hpf1PrevOut;
+    private static float _hpf2PrevIn, _hpf2PrevOut;
+    private const  float Hpf1Alpha = 0.99881f; // ~37 Hz cutoff at 48 kHz
+    private const  float Hpf2Alpha = 0.99429f; // ~440 Hz cutoff at 48 kHz
+
+    // LPF: y[n] = alpha * x[n] + (1-alpha) * y[n-1],  alpha = dt/(RC+dt)
+    private static float _lpfPrev;
+    private const  float LpfAlpha = 0.64774f; // ~14 kHz cutoff at 48 kHz
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static float HighPass(float input) {
-        var output = HpfAlpha * (_hpfPrevOut + input - _hpfPrevIn);
-        _hpfPrevIn  = input;
-        _hpfPrevOut = output;
-        return output;
+    internal static float Filter(float input) {
+        // HPF 37 Hz
+        var hp1 = Hpf1Alpha * (_hpf1PrevOut + input - _hpf1PrevIn);
+        _hpf1PrevIn  = input;
+        _hpf1PrevOut = hp1;
+
+        // HPF 440 Hz
+        var hp2 = Hpf2Alpha * (_hpf2PrevOut + hp1 - _hpf2PrevIn);
+        _hpf2PrevIn  = hp1;
+        _hpf2PrevOut = hp2;
+
+        // LPF 14 kHz
+        _lpfPrev = LpfAlpha * hp2 + (1f - LpfAlpha) * _lpfPrev;
+        return _lpfPrev;
     }
 
     internal static void Initialize() {
@@ -53,10 +70,10 @@ internal static class Audio {
             return;
         }
 
-        // Apply high-pass filter in-place to remove DC offset
+        // Apply NES output filter chain in-place
         var span = CollectionsMarshal.AsSpan(buffer);
         for (int i = 0; i < span.Length; i++)
-            span[i] = HighPass(span[i]);
+            span[i] = Filter(span[i]);
 
         // Always send audio unless queue is severely backed up
         if (SDL.GetAudioStreamQueued(_stream) < MaxQueueBytes) {
