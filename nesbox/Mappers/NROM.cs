@@ -101,7 +101,7 @@ internal sealed class NROM : API.INESCartridge {
     public byte CPUReadByte() {
         var addr = System.Address;
         return addr < 0x8000
-            ? (byte)(addr >> 8)
+            ? System.OpenBus
             : ProgramROM[(addr - 0x8000) & (ProgramROM.Length - 1)];
     }
 
@@ -112,7 +112,7 @@ internal sealed class NROM : API.INESCartridge {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte ReadByte(ushort address) =>
         address < 0x8000
-            ? (byte)(address >> 8)
+            ? System.OpenBus
             : ProgramROM[(address - 0x8000) & (ProgramROM.Length - 1)];
 
     /// <summary>

@@ -108,7 +108,7 @@ internal static class OpCodes {
                         ((Register.z ? 1 : 0) << 1) |
                         ((Register.i ? 1 : 0) << 2) |
                         ((Register.d ? 1 : 0) << 3) |
-                        ((Register.b ? 1 : 0) << 4) |
+                        (1                    << 4) |
                         (1                    << 5) |
                         ((Register.v ? 1 : 0) << 6) |
                         ((Register.n ? 1 : 0) << 7)
@@ -160,7 +160,7 @@ internal static class OpCodes {
         /* 20 jsr a   */ JSR,
         /* 21 and *+x */ () => IndexedIndirect(AND),
         /* 22 jam     */ JAM,
-        /* 23 slo *+x */ () => IndexedIndirect(SLO),
+        /* 23 rla *+x */ () => IndexedIndirect(RLA),
         /* 24 bit d   */ () => DirectPage(BIT),
         /* 25 and d   */ () => DirectPage(AND),
         /* 26 rol d   */ () => DirectPage(ROL),
@@ -539,11 +539,16 @@ internal static class OpCodes {
                 Memory.Push();
 
                 Register.i = true;
-                Register.b = true;
                 break;
 
             case 5:
-                ADL = 0xFE;
+                if (NMIAsserted) {
+                    NMIAsserted = false;
+                    Vector      = Vectors.NMI;
+                    ADL = (byte)(Vector & 0xFF);
+                } else {
+                    ADL = 0xFE;
+                }
                 ADH = 0xFF;
                 DriveAddressPins();
                 Memory.CPU_Read();
@@ -552,13 +557,13 @@ internal static class OpCodes {
                 break;
 
             case 6:
-                ADL = 0xFF;
-                ADH = 0xFF;
+                ADL++;
                 DriveAddressPins();
                 Memory.CPU_Read();
 
                 PC    = (ushort)((Data << 8) | DB);
                 cycle = 0xff;
+                prevInterruptInhibit = true;
                 break;
 
             default:
@@ -1128,21 +1133,35 @@ internal static class OpCodes {
     private static readonly unsafe Opcode ISC = new(&__ISC, RWKind.RMW);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void __SHA() => Data = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
+    private static void __SHA() {
+        var h = (byte)(_unfixedADH + 1);
+        Data = (byte)(Register.AC & Register.X & h);
+        if (_pageOverlap) ADH = Data;
+    }
     private static readonly unsafe Opcode SHA = new(&__SHA, RWKind.Write);
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void __SHX() => Data = (byte)(Register.X  & (1              + (Address >> 8)));
+    private static void __SHX() {
+        var h = (byte)(_unfixedADH + 1);
+        Data = (byte)(Register.X & h);
+        if (_pageOverlap) ADH = Data;
+    }
     private static readonly unsafe Opcode SHX = new(&__SHX, RWKind.Write);
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void __SHY() => Data = (byte)(Register.Y  & (1              + (Address >> 8)));
+    private static void __SHY() {
+        var h = (byte)(_unfixedADH + 1);
+        Data = (byte)(Register.Y & h);
+        if (_pageOverlap) ADH = Data;
+    }
     private static readonly unsafe Opcode SHY = new(&__SHY, RWKind.Write);
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __TAS() {
-        Data       = (byte)(Register.AC & Register.X & (1 + (Address >> 8)));
+        var h = (byte)(_unfixedADH + 1);
         Register.S = (byte)(Register.AC & Register.X);
+        Data       = (byte)(Register.S & h);
+        if (_pageOverlap) ADH = Data;
     }
     private static readonly unsafe Opcode TAS = new(&__TAS, RWKind.Write);
    
@@ -1283,10 +1302,11 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __LAS() {
-        Register.AC = Register.X = Register.S = (byte)(Data & Register.S);
-        NonArithmeticProcessorFlagSets(Data);
+        var val = (byte)(Data & Register.S);
+        Register.AC = Register.X = Register.S = val;
+        NonArithmeticProcessorFlagSets(val);
     }
-    private static readonly unsafe Opcode LAS = new(&__LAS, RWKind.Write);
+    private static readonly unsafe Opcode LAS = new(&__LAS, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void RORA() {
@@ -1402,6 +1422,7 @@ internal static class OpCodes {
                 break;
 
             case 4:
+                _unfixedADH = ADH;
                 if (_pageOverlap) ADH++;
 
                 switch (op.kind) {
@@ -1410,12 +1431,12 @@ internal static class OpCodes {
                         DriveAddressPins();
                         Memory.CPU_Read();
                         goto complete;
-                    
+
                     case RWKind.RMW:
                         DriveAddressPins();
                         Memory.CPU_Read();
                         break;
-                    
+
                     default:
                         throw new ArgumentException();
                 }
@@ -1553,12 +1574,12 @@ internal static class OpCodes {
             case 5:
                 if (op.kind is not RWKind.RMW) goto default;
                 goto complete;
-            
+
             default:
                 Console.WriteLine("[CPU] Performed Absolute read on incorrect cycle");
                 Quit = true;
                 break;
-            
+
             complete:
                 op.ptr();
                 post();
@@ -1686,22 +1707,23 @@ internal static class OpCodes {
                 break;
             
             case 5:
+                _unfixedADH = ADH;
                 if (_pageOverlap) {
                     ADH++;
                     DriveAddressPins();
                 }
-                
+
                 switch (op.kind) {
                     case RWKind.Write: goto complete;
                     case RWKind.RMW:
                         Memory.CPU_Read();
                         break;
-                    
+
                     case RWKind.Read:
                         Memory.CPU_Read();
                         goto complete;
-                        
-                    default: throw new ArgumentException();    
+
+                    default: throw new ArgumentException();
                 }
                 
                 break;
@@ -1807,4 +1829,5 @@ internal static class OpCodes {
 
 
     private static bool _pageOverlap;
+    internal static byte _unfixedADH;
 }

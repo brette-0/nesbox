@@ -132,7 +132,6 @@ internal static class System {
             for (int i = 0; i < 8; i++) spriteIsZero[i] = false;
 
             var spriteHeight = (PPUCTRL & 0x20) != 0 ? 16 : 8;
-            var overflowFound = false;
 
             for (int n = 0; n < 64; n++) {
                 var yPos = OAMBuffer[n * 4];
@@ -439,8 +438,8 @@ internal static class System {
 
         internal static void PowerOn() {
             Reset();
-            
-            // override with non-unified behavior between reset and power on states
+
+            Array.Fill<byte>(OAMBuffer, 0xFE);
         }
 
         /// <summary>
@@ -510,12 +509,13 @@ internal static class System {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2002_PPUSTATUS() {
                 // Low 5 bits come from the PPU's internal latch (open bus on
-                // the unused bits). Bits 5-7 are the live status flags.
+                // the unused bits). Bits 7-5 are the live status flags.
+                // Reading $2002 only refreshes bits 7-5 of the latch.
                 Data        = (byte)(ppuLatch & 0x1f);
                 Data       |= (byte)(inVblank       ? 0x80 : 0x00);
                 Data       |= (byte)(spriteZeroHit  ? 0x40 : 0x00);
                 Data       |= (byte)(spriteOverflow ? 0x20 : 0x00);
-                ppuLatch    = Data;     // R2002 itself refreshes the latch with what it returns
+                ppuLatch    = (byte)((ppuLatch & 0x1F) | (Data & 0xE0));
                 inVblank    = false;
                 nmiLine     = false;
                 // Do NOT clear NMIAsserted here. NMIAsserted is the latched
@@ -587,8 +587,8 @@ internal static class System {
                     Data          = ppuDataBuffer;
                     ppuDataBuffer = PPUBusRead(v);
                 } else {
-                    // Palette: direct read; buffer holds NT mirror underneath.
-                    Data          = PPUBusRead(v);
+                    // Palette: direct read; bits 6-7 are open bus from PPU latch.
+                    Data          = (byte)((PPUBusRead(v) & 0x3F) | (ppuLatch & 0xC0));
                     ppuDataBuffer = PPUBusRead((ushort)(v - 0x1000));
                 }
                 ppuLatch = Data;        // latch refreshes with the byte just returned
@@ -629,7 +629,17 @@ internal static class System {
         
                 if (dmaGetPhase) {
                     var addr = (ushort)((dmaPage << 8) | dmaIndex);
-                    Memory.Read(addr, out dmaLatch);
+                    // The 2A03 has three internal address buses (6502, DMC, OAM).
+                    // APU registers ($4000-$401F) only respond when the *6502*
+                    // address bus is in that range.  After STA $4014, the 6502
+                    // would next fetch from PC (in ROM), so its bus is NOT in
+                    // the APU range — OAM DMA reads open bus instead.
+                    if (addr is >= 0x4000 and <= 0x401F
+                        && PC is not (>= 0x4000 and <= 0x401F)) {
+                        dmaLatch = OpenBus;
+                    } else {
+                        Memory.Read(addr, out dmaLatch);
+                    }
                 } else {
                     OAMBuffer[OAMAddress++] = dmaLatch;
                     dmaIndex++;
@@ -833,6 +843,17 @@ internal static class System {
         internal static void Step() {
             _clockFlipFlop ^= true;
 
+            if (_pendingFrameIRQClear && !_clockFlipFlop) {
+                _pendingFrameIRQClear = false;
+                FrameIRQAsserted = false;
+            }
+
+            if (_irqWindow > 0 && --_irqWindow is > 0 and <= 3 && !IRQInhibit)
+                FrameIRQAsserted = true;
+
+            if (_irqFlagWindow > 0) _irqFlagWindow--;
+
+
             switch (_resetFrameCounter) {
                 case > 4:
                     break;
@@ -847,6 +868,8 @@ internal static class System {
                         Pulse2.HalfFrame();
                         Triangle.QuarterFrame();
                         Triangle.HalfFrame();
+                        Noise.QuarterFrame();
+                        Noise.HalfFrame();
                     }
                     break;
                 
@@ -871,10 +894,23 @@ internal static class System {
                     Noise.HalfFrame();
                     goto case S1;
 
+                case S4 - 1:
+                    if (UsingFiveStep) break;
+                    if (!IRQInhibit) {
+                        if (_frameCounterOddReset) {
+                            _irqWindow = 5;
+                        } else {
+                            FrameIRQAsserted = true;
+                            _irqWindow = 3;
+                        }
+                    } else {
+                        _irqFlagWindow = 4;
+                    }
+                    break;
+
                 case S4:
                     if (UsingFiveStep) break;
-                    _frameCounter = 0;
-                    if (!IRQInhibit) FrameIRQAsserted = true;
+                    _frameCounter = unchecked((ushort)(-1));
                     goto case S2;
 
                case S5:
@@ -883,6 +919,11 @@ internal static class System {
                    goto case S2;
             }
             
+            if (IOAssertion && _clockFlipFlop) {
+                Program.Controller1?.OnWrite();
+                Program.Controller2?.OnWrite();
+            }
+
             Pulse1.Step();
             Pulse2.Step();
             Triangle.Step();
@@ -902,15 +943,14 @@ internal static class System {
             
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void Step() {
-                if (!enabled) return;
-                
-                // work
+                if (enableDelay > 0 && --enableDelay is 0) enabled = true;
+
                 if (timerCounter is not 0) {
                     timerCounter--;
                     return;
                 }
 
-                timerCounter = rateTable[rateIndex];
+                timerCounter = (ushort)(rateTable[rateIndex] - 1);
 
                 if (!Silence) {
                     switch ((shiftReg & 1) is not 0, outputLevel) {
@@ -927,27 +967,14 @@ internal static class System {
                     if (bufferEmpty) {
                         Silence = true;
                     } else {
-                        Silence     = false; // TODO: check what sets this, seems sub-optimal
+                        Silence     = false;
                         shiftReg    = sampleBuffer;
                         bufferEmpty = true;
                     }
                 } else bitsRemaining--;
 
-                if (!bufferEmpty || bytesRemaining is 0) return;
-                // TODO: use /RDY to halt || EMUALTE THIS CORRECTLY
-                sampleBuffer = Memory.DMC_Read(currentAddress);
-                bufferEmpty  = false;
-
-                currentAddress = (ushort)(++currentAddress | 0x8000);
-                bytesRemaining--;
-
-                if (bytesRemaining is not 0) return;
-                if (Loop) {
-                    currentAddress = SampleAddress;
-                    bytesRemaining = SampleLength;
-                } else if (DMC_IRQ_Enabled) {
-                    IRQFlag = true;
-                }
+                if (!bufferEmpty || bytesRemaining is 0 || dmaRequested || inDMA) return;
+                dmaRequested = true;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -989,10 +1016,58 @@ internal static class System {
             internal static bool   DMC_IRQ_Enabled;
             internal static bool   Loop;
             internal static bool   enabled;
-            
+            internal static byte   enableDelay;
+
             internal static bool   inDMA;
+            internal static bool   dmaRequested;
+            private  static byte   dmaCycleCount;
+            internal static byte   dmaDelayCount;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void DMA_Step() {
+                if (!dmaRequested && !inDMA) return;
+
+                if (dmaRequested && !inDMA) {
+                    if (!enabled) { dmaDelayCount++; return; }
+                    inDMA = true;
+                    dmaRequested = false;
+                    // DMC DMA steals 4 CPU cycles on a read (halt + alignment + put + get),
+                    // or 3 on a write (halt + put + get).  The first DMA after enable uses
+                    // the accumulated delay count to decide; subsequent DMAs default to 4
+                    // because the CPU is almost always on a read cycle when the timer fires
+                    // during normal sample playback.
+                    dmaCycleCount = dmaDelayCount > 0
+                        ? (byte)((dmaDelayCount & 1) is 1 ? 3 : 4)
+                        : (byte)4;
+                    dmaDelayCount = 0;
+                    RDY = true;
+                    return;
+                }
+
+                if (--dmaCycleCount is not 0) return;
+
+                var sample = Program.Cartridge.ReadByte(currentAddress);
+                OpenBus = sample;
+                sampleBuffer = sample;
+                bufferEmpty = false;
+
+                currentAddress = (ushort)((currentAddress + 1) | 0x8000);
+                bytesRemaining--;
+
+                if (bytesRemaining is 0) {
+                    if (Loop) {
+                        currentAddress = SampleAddress;
+                        bytesRemaining = SampleLength;
+                    } else if (DMC_IRQ_Enabled) {
+                        IRQFlag = true;
+                    }
+                }
+
+                inDMA = false;
+                if (!PPU.inDMA) RDY = false;
+            }
         }
-        
+
         internal static class Noise {
             private static readonly ushort[] PeriodTable = {
                 4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
@@ -1360,7 +1435,7 @@ internal static class System {
 
             
             internal static void W4015_Status() {
-                PCM.enabled      = (Data & 0x10) is 0x10;
+                var pcmEnable    = (Data & 0x10) is 0x10;
                 Noise.enabled    = (Data & 0x08) is 0x08;
                 Triangle.enabled = (Data & 0x04) is 0x04;
                 Pulse2.enabled   = (Data & 0x02) is 0x02;
@@ -1370,55 +1445,61 @@ internal static class System {
                 if (!Pulse2.enabled)   Pulse2.Length = 0;
                 if (!Triangle.enabled) Triangle.Length = 0;
                 if (!Noise.enabled)    Noise.Length = 0;
-                if (PCM.enabled) {
+                PCM.IRQFlag = false;
+                if (pcmEnable) {
+                    PCM.enableDelay = 4;
                     if (PCM.bytesRemaining is 0) {
                         PCM.currentAddress = PCM.SampleAddress;
                         PCM.bytesRemaining = PCM.SampleLength;
                     }
 
-                    if (!PCM.bufferEmpty || PCM.bytesRemaining is 0) return;
-                    PCM.sampleBuffer   = Memory.DMC_Read(PCM.currentAddress);
-                    PCM.bufferEmpty    = false;
-                    PCM.currentAddress = (ushort)(++PCM.currentAddress | 0x8000);
-                    PCM.bytesRemaining--;
-
-                    if (PCM.bytesRemaining is not 0) return;
-                    if (PCM.Loop) {
-                        PCM.currentAddress = PCM.SampleAddress;
-                        PCM.bytesRemaining = PCM.SampleLength;
-                    } else if (PCM.DMC_IRQ_Enabled) PCM.IRQFlag = true;
+                    if (!PCM.bufferEmpty || PCM.bytesRemaining is 0 || PCM.dmaRequested || PCM.inDMA) return;
+                    PCM.dmaRequested = true;
                 } else {
+                    PCM.enabled = false;
+                    PCM.enableDelay = 0;
+                    PCM.dmaDelayCount = 0;
                     PCM.bytesRemaining  = 0;
                     PCM.bufferEmpty     = true;
                     PCM.Silence         = true;
-                    PCM.IRQFlag         = false;
+                    if (PCM.inDMA || PCM.dmaRequested) {
+                        PCM.inDMA = false;
+                        PCM.dmaRequested = false;
+                        if (!PPU.inDMA) RDY = false;
+                    }
                 }
             }
 
             internal static void R4015_Status() {
-                var resp = (byte)(Data & 0x20); // preserve open bus bit 5 only
+                var resp = (byte)(OpenBus & 0x20); // bit 5 is open bus
                 
                 resp |= (byte)(Pulse1.Length      is not 0 ? 0x01 : 0);
                 resp |= (byte)(Pulse2.Length      is not 0 ? 0x02 : 0);
                 resp |= (byte)(Triangle.Length    is not 0 ? 0x04 : 0);
                 resp |= (byte)(Noise.Length       is not 0 ? 0x08 : 0);
                 resp |= (byte)(PCM.bytesRemaining      > 0 ? 0x10 : 0);
-                resp |= (byte)(FrameIRQAsserted            ? 0x40 : 0); // bit 6: frame IRQ pending
+                resp |= (byte)(FrameIRQAsserted || _irqFlagWindow is > 0 and <= 2 ? 0x40 : 0); // bit 6: frame IRQ pending
                 resp |= (byte)(PCM.IRQFlag                 ? 0x80 : 0); // bit 7: DMC IRQ pending
                 Data =  resp;
 
-                FrameIRQAsserted = false; // reading $4015 acknowledges frame IRQ only
+                _pendingFrameIRQClear = true;
             }
 
             internal static void W4017_FrameCounter() {
                 UsingFiveStep = (Data & 0x80) is 0x80;
                 IRQInhibit    = (Data & 0x40) is 0x40;
+                if (IRQInhibit) FrameIRQAsserted = false;
 
-                _resetFrameCounter = (byte)(_clockFlipFlop ? 4 : 3);
+                _frameCounterOddReset = !_clockFlipFlop;
+                _resetFrameCounter = (byte)(_clockFlipFlop ? 3 : 2);
             }
         }
 
         internal static bool FrameIRQAsserted;
+        internal static bool _pendingFrameIRQClear;
+        internal static byte _irqWindow;
+        internal static byte _irqFlagWindow;
+        internal static bool _frameCounterOddReset;
         internal static byte _resetFrameCounter;
         internal static bool UsingFiveStep;
         internal static bool IRQInhibit;
@@ -1431,7 +1512,7 @@ internal static class System {
         
 
         
-        private  static bool   _clockFlipFlop;
+        internal static bool   _clockFlipFlop;
         private  static ushort _frameCounter;
     }
     
@@ -1493,23 +1574,24 @@ internal static class System {
         internal static void Read(ushort address, out byte data) {
             if (address < 0x2000) {
                 data = SystemRAM[address & 0x7ff];
+                OpenBus = data;
                 goto SendReadToCart;
             }
-            
+
             if (address < 0x4000) {
                 // Reads of nominally write-only registers ($2000/$2001/$2003/$2005/$2006)
                 // return the PPU's internal data bus latch ("PPUGenLatch"), NOT the CPU
                 // data bus. The latch reflects the last byte the PPU put on its bus —
                 // any write to any PPU register, or any byte returned by $2002/$2004/$2007.
                 switch (address & 0x2007) {
-                    case PPUCTRL:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
-                    case PPUMASK:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
-                    case PPUSTATUS: PPU.Registers.R2002_PPUSTATUS(); data = Data; goto SendReadToCart;
-                    case OAMADDR:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
-                    case OAMDATA:   PPU.OAM.R2004_OAMDATA();         data = Data; goto SendReadToCart;
-                    case PPUSCROLL: data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
-                    case PPUADDR:   data = PPU.Registers.ppuLatch;            goto SendReadToCart; // write-only, returns PPU latch
-                    case PPUDATA:   PPU.Registers.R2007_PPUDATA(); data = Data; goto SendReadToCart;
+                    case PPUCTRL:   data = PPU.Registers.ppuLatch; OpenBus = data; goto SendReadToCart;
+                    case PPUMASK:   data = PPU.Registers.ppuLatch; OpenBus = data; goto SendReadToCart;
+                    case PPUSTATUS: PPU.Registers.R2002_PPUSTATUS(); data = Data; OpenBus = data; goto SendReadToCart;
+                    case OAMADDR:   data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case OAMDATA:   PPU.OAM.R2004_OAMDATA();         data = Data; OpenBus = data; goto SendReadToCart;
+                    case PPUSCROLL: data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUADDR:   data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUDATA:   PPU.Registers.R2007_PPUDATA(); data = Data; OpenBus = data; goto SendReadToCart;
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
                         Quit = true;
@@ -1520,23 +1602,32 @@ internal static class System {
 
             if (address > 0x4020) {
                 data = Program.Cartridge.ReadByte(address);
+                OpenBus = data;
                 goto SendReadToCart;
             }
 
             switch (address) {
-                case CHANNELSTATUS: APU.Registers.R4015_Status(); data = Data; goto SendReadToCart;
-                case IODEVICE1:     data = Program.Controller1?.OnRead() ?? 0; goto SendReadToCart;
-                case IODEVICE2:     data = Program.Controller2?.OnRead() ?? 0; goto SendReadToCart;
-                
-                default: data = (byte)(address >> 8); goto SendReadToCart;
+                case CHANNELSTATUS:
+                    APU.Registers.R4015_Status();
+                    data = Data;
+                    goto SendReadToCart;
+                case IODEVICE1:
+                    data = (byte)((Program.Controller1?.OnRead() ?? 0) | (OpenBus & 0xE0));
+                    goto SendReadToCart;
+                case IODEVICE2:
+                    data = (byte)((Program.Controller2?.OnRead() ?? 0) | (OpenBus & 0xE0));
+                    goto SendReadToCart;
+
+                default: data = OpenBus; goto SendReadToCart;
             }
-            
+
             SendReadToCart:
             Program.Cartridge.ProgramRead(address);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void CPU_Write() {
+            OpenBus = Data;
             switch (Address) {
                 case < 0x2000:
                     SystemRAM[Address & 0x7ff] = Data;
@@ -1544,43 +1635,41 @@ internal static class System {
                 
                 case < 0x4000:
                     switch (Address & 0x2007) {
-                        case PPUCTRL:   PPU.Registers.W2000_PPUCRTL();   goto SendReadToCart;
-                        case PPUMASK:   PPU.Registers.W2001_PPUMASK();   goto SendReadToCart;
-                        case PPUSTATUS: goto SendReadToCart; // read-only, writes ignored
-                        case OAMADDR:   PPU.Registers.W2003_OAMADDR();   goto SendReadToCart;
-                        case OAMDATA:   PPU.Registers.W2004_OAMDATA();   goto SendReadToCart;
-                        case PPUSCROLL: PPU.Registers.W2005_PPUSCROLL(); goto SendReadToCart;
-                        case PPUADDR:   PPU.Registers.W2006_PPUADDR();   goto SendReadToCart;
-                        case PPUDATA:   PPU.Registers.W2007_PPUDATA();   goto SendReadToCart;
+                        case PPUCTRL:   PPU.Registers.W2000_PPUCRTL();   goto SendAddressToCart;
+                        case PPUMASK:   PPU.Registers.W2001_PPUMASK();   goto SendAddressToCart;
+                        case PPUSTATUS: PPU.Registers.ppuLatch = Data; goto SendAddressToCart;
+                        case OAMADDR:   PPU.Registers.W2003_OAMADDR();   goto SendAddressToCart;
+                        case OAMDATA:   PPU.Registers.W2004_OAMDATA();   goto SendAddressToCart;
+                        case PPUSCROLL: PPU.Registers.W2005_PPUSCROLL(); goto SendAddressToCart;
+                        case PPUADDR:   PPU.Registers.W2006_PPUADDR();   goto SendAddressToCart;
+                        case PPUDATA:   PPU.Registers.W2007_PPUDATA();   goto SendAddressToCart;
                     }
                     break;
                 
-                case PULSE1_ENVELOPE : APU.Registers.W4000_Pulse1();   goto SendReadToCart;
-                case PULSE1_SWEEP    : APU.Registers.W4001_Pulse1();   goto SendReadToCart;
-                case PULSE1_TIMER    : APU.Registers.W4002_Pulse1();   goto SendReadToCart;
-                case PULSE1_COUNTER  : APU.Registers.W4003_Pulse1();   goto SendReadToCart;
-                case PULSE2_ENVELOPE : APU.Registers.W4004_Pulse2();   goto SendReadToCart;
-                case PULSE2_SWEEP    : APU.Registers.W4005_Pulse2();   goto SendReadToCart;
-                case PULSE2_TIMER    : APU.Registers.W4006_Pulse2();   goto SendReadToCart;
-                case PULSE2_COUNTER  : APU.Registers.W4007_Pulse2();   goto SendReadToCart;
-                case TRIANGLE_COUNTER: APU.Registers.W4008_Triangle(); goto SendReadToCart;
-                case TRIANGLE_TIMER  : APU.Registers.W400A_Triangle(); goto SendReadToCart;
-                case TRIANGLE_LINEAR : APU.Registers.W400B_Triangle(); goto SendReadToCart;
-                case NOISE_ENVELOPE  : APU.Registers.W400C_Noise();    goto SendReadToCart;
-                case NOISE_MODE      : APU.Registers.W400E_Noise();    goto SendReadToCart;
-                case NOISE_COUNTER   : APU.Registers.W400F_Noise();    goto SendReadToCart;
-                case DMC_MODE        : APU.Registers.W4010_DMC();      goto SendReadToCart;
-                case DMC_LOAD        : APU.Registers.W4011_DMC();      goto SendReadToCart;
-                case DMC_ASAMPLE     : APU.Registers.W4012_DMC();      goto SendReadToCart;
-                case DMC_LSAMPLE     : APU.Registers.W4013_DMC();      goto SendReadToCart;
-                case OAMDMA          : PPU.OAM.W4014_OAMDMA();         goto SendReadToCart;;
-                case CHANNELSTATUS   : APU.Registers.W4015_Status();   goto SendReadToCart;;
+                case PULSE1_ENVELOPE : APU.Registers.W4000_Pulse1();   goto SendAddressToCart;
+                case PULSE1_SWEEP    : APU.Registers.W4001_Pulse1();   goto SendAddressToCart;
+                case PULSE1_TIMER    : APU.Registers.W4002_Pulse1();   goto SendAddressToCart;
+                case PULSE1_COUNTER  : APU.Registers.W4003_Pulse1();   goto SendAddressToCart;
+                case PULSE2_ENVELOPE : APU.Registers.W4004_Pulse2();   goto SendAddressToCart;
+                case PULSE2_SWEEP    : APU.Registers.W4005_Pulse2();   goto SendAddressToCart;
+                case PULSE2_TIMER    : APU.Registers.W4006_Pulse2();   goto SendAddressToCart;
+                case PULSE2_COUNTER  : APU.Registers.W4007_Pulse2();   goto SendAddressToCart;
+                case TRIANGLE_COUNTER: APU.Registers.W4008_Triangle(); goto SendAddressToCart;
+                case TRIANGLE_TIMER  : APU.Registers.W400A_Triangle(); goto SendAddressToCart;
+                case TRIANGLE_LINEAR : APU.Registers.W400B_Triangle(); goto SendAddressToCart;
+                case NOISE_ENVELOPE  : APU.Registers.W400C_Noise();    goto SendAddressToCart;
+                case NOISE_MODE      : APU.Registers.W400E_Noise();    goto SendAddressToCart;
+                case NOISE_COUNTER   : APU.Registers.W400F_Noise();    goto SendAddressToCart;
+                case DMC_MODE        : APU.Registers.W4010_DMC();      goto SendAddressToCart;
+                case DMC_LOAD        : APU.Registers.W4011_DMC();      goto SendAddressToCart;
+                case DMC_ASAMPLE     : APU.Registers.W4012_DMC();      goto SendAddressToCart;
+                case DMC_LSAMPLE     : APU.Registers.W4013_DMC();      goto SendAddressToCart;
+                case OAMDMA          : PPU.OAM.W4014_OAMDMA();         goto SendAddressToCart;;
+                case CHANNELSTATUS   : APU.Registers.W4015_Status();   goto SendAddressToCart;;
                 case IODEVICE1:
                     IOAssertion = (Data & 1) is 1;
-                    Program.Controller1!.OnWrite();
-                    Program.Controller2!.OnWrite();
                     break;
-                case FRAMECOUNTER:     APU.Registers.W4017_FrameCounter(); goto SendReadToCart;
+                case FRAMECOUNTER:     APU.Registers.W4017_FrameCounter(); goto SendAddressToCart;
                     
                 case > 0x4020:
                     Program.Cartridge.CPUWrite();
@@ -1588,10 +1677,10 @@ internal static class System {
                 
                 default:
                     // TODO: open bus, nothing to write to "Actually, remember how we write to PPUSTATUS to precharge"
-                    goto SendReadToCart;
+                    goto SendAddressToCart;
                     break;
             }
-            SendReadToCart:
+            SendAddressToCart:
             Program.Cartridge.ProgramRead(Address);
         }
 
@@ -1670,6 +1759,7 @@ internal static class System {
                     cpuDiv = 0;
                     Step();
                     APU.Step();
+                    APU.PCM.DMA_Step();
                     PPU.OAM.DMA();
                     if (Quit) return;
                 }
@@ -1775,15 +1865,18 @@ internal static class System {
                 goto HandleInstruction;
             }
 
-            if (CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag) {
-                if (Register.i) goto FetchInstruction;
-                
-                Vector     = Vectors.IRQ;
-                OpHandle   = Interrupt;
-                goto HandleInstruction;
+            if (_irqDetected) {
+                _irqDetected = false;
+                if (!prevInterruptInhibit) {
+                    Vector     = Vectors.IRQ;
+                    OpHandle   = Interrupt;
+                    goto HandleInstruction;
+                }
             }
-            
+
             FetchInstruction:
+            _irqDetected = CPU_IRQ || APU.FrameIRQAsserted || APU.PCM.IRQFlag;
+            prevInterruptInhibit = Register.i;
             AD          = PC;
             DriveAddressPins();
 
@@ -1862,8 +1955,9 @@ internal static class System {
                 PCH   = Data;
                 cycle = 0xff;
                 Reset = false;
+                prevInterruptInhibit = true;
                 break;
-            
+
             default:
                 Console.WriteLine("[CPU] StepReset on incorrect cycle");
                 Quit = true;
@@ -1910,6 +2004,10 @@ internal static class System {
                 break;
 
             case 5:
+                if (NMIAsserted) {
+                    NMIAsserted = false;
+                    Vector      = Vectors.NMI;
+                }
                 AD = Vector;
                 DriveAddressPins();
                 Memory.CPU_Read();
@@ -1923,8 +2021,9 @@ internal static class System {
                 Memory.CPU_Read();
                 PCH   = Data;
                 cycle = 0xff;
+                prevInterruptInhibit = true;
                 break;
-            
+
             default:
                 Console.WriteLine("[CPU] StepIRQ on incorrect cycle");
                 Quit = true;
@@ -1937,6 +2036,8 @@ internal static class System {
     internal static bool   CPU_IRQ;
     internal static bool   NMIAsserted;
     private static  bool   Reset;
+    internal static bool   prevInterruptInhibit;
+    internal static bool   _irqDetected;
 
 
     internal static Action OpHandle;
@@ -1944,6 +2045,7 @@ internal static class System {
 
     internal static ushort Address;
     internal static byte   Data;
+    internal static byte   OpenBus;
     internal static byte   DB;
     internal static byte   PCL;
     internal static byte   PCH;

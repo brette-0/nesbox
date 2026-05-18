@@ -46,36 +46,26 @@ public class StandardController_NTSCU : API.IIO {
     
     public void SetIndex(byte Index) => _port = Index;
     public void OnWrite() {
-        if (!System.IOAssertion) return;
-        // Gamepad handles are managed by the Renderer thread via SDL events.
-        // We just read button state here — GetGamepadButton is thread-safe.
         var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
-        if (gp is 0) { _shift = 0; _readCount = 0; return; }
 
-        // NES button order in the shift register (shift out D0 first):
-        //   Read 1: A       Read 5: Up
-        //   Read 2: B       Read 6: Down
-        //   Read 3: Select  Read 7: Left
-        //   Read 4: Start   Read 8: Right
-        _shift = 0;
-        
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))     _shift |= 0x01; // A
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))      _shift |= 0x02; // B
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))      _shift |= 0x04; // Select
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))     _shift |= 0x08; // Start
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))    _shift |= 0x10; // Up
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadDown))  _shift |= 0x20; // Down
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadLeft))  _shift |= 0x40; // Left
-        if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadRight)) _shift |= 0x80; // Right
-
-        _readCount = 0;
+        if (System.IOAssertion) {
+            _shift = 0;
+            if (gp is not 0) {
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))     _shift |= 0x01;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))      _shift |= 0x02;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))      _shift |= 0x04;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))     _shift |= 0x08;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))    _shift |= 0x10;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadDown))  _shift |= 0x20;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadLeft))  _shift |= 0x40;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadRight)) _shift |= 0x80;
+            }
+            _readCount = 0;
+        }
     }
 
     public byte OnRead() {
-        if (System.IOAssertion) return 0;
-        // NTSC NES: after 8 reads, D0 floats high → returns 1.
-        // Famicom: after 8 reads, D0 is grounded → returns 0.
-        // TODO: check Program.isFamicom for correct post-8 behavior.
+        if (System.IOAssertion) return (byte)(_shift & 1);
         if (_readCount >= 8) return 1;
 
         var bit = (byte)(_shift & 1);
