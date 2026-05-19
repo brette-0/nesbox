@@ -60,6 +60,10 @@ internal static class Program {
                     // use 2c05
                     break;
                 
+                case "--no-audio":
+                    NoAudio = true;
+                    break;
+
                 case "--pal":   // 312 scanlines (PAL behavior) | OAM refresh 265-310 | 3.2 dots per CPU cycle
                                // 3.2 dots per pixel           | all black border hides NTSC border
                                // black top 1 scanline, left 2 pixels and right 2 pixels
@@ -133,8 +137,10 @@ internal static class Program {
         }
 
         while (!Renderer.RendererReady) { }         // wait for renderer to become ready
-        Audio.Initialize(); if (System.Quit) {
-            return;
+        if (!NoAudio) {
+            Audio.Initialize(); if (System.Quit) {
+                return;
+            }
         }
         // RAM must be initialised BEFORE the emu thread is spawned, otherwise
         // there's a race: the CPU starts executing (reading SystemRAM as zeros
@@ -165,6 +171,7 @@ internal static class Program {
     internal static API.IIO?                  Controller1;
     internal static API.IIO?                  Controller2;
     internal static bool                     isFamicom;
+    internal static bool                     NoAudio;
     private static  Func<byte>               _memoryInit = null!;
     private static  API.Graphics.Shader      _shader     = null!;
 

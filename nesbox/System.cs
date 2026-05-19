@@ -41,6 +41,21 @@ internal static class System {
         private static int     spriteCount;
         private static bool[]  spriteIsZero     = new bool[8];
 
+        // ── Per-dot sprite evaluation state machine ─────────────────
+        // State: 0=clearing secOAM, 1=evaluating, 2=overflow scan, 3=done
+        private static byte sprEvalState;
+        private static byte sprSecOamAddr;      // secondary OAM byte write pointer (0-31)
+        private static int  sprEvalN;           // primary OAM sprite index (0-63)
+        private static int  sprEvalStartN;      // starting sprite index (for wrap detection)
+        private static byte sprEvalM;           // byte offset for overflow bug (0-3)
+        private static byte sprEvalStep;        // logical copy phase: 0=Y check, 1-3=copy
+        private static byte sprOamStartM;       // misalignment: OAMAddress & 3
+        internal static byte sprEvalLatch;      // data latch (visible to R2004)
+        private static bool sprZeroOnLine;      // first evaluation at dot 66 found in-range
+        private static int  sprEvalNextLine;    // which scanline we're evaluating for
+        private static bool sprEvalFirstDone;   // has the first sprite been checked at dot 66?
+        private static int  sprEvalCount;       // sprites found during current evaluation (applied at dot 257)
+
         private static bool RenderingEnabled =>
             (PPUMASK & 0x18) is not 0;
 
@@ -127,28 +142,120 @@ internal static class System {
             ptHi = Program.Cartridge.PPUReadByte();
         }
 
-        private static void EvaluateSprites(int nextLine) {
-            spriteCount = 0;
-            for (int i = 0; i < 8; i++) spriteIsZero[i] = false;
+        /// <summary>
+        /// Initialize sprite evaluation state at dot 1 of visible/pre-render lines.
+        /// </summary>
+        private static void SprEvalInit(bool isPreRender, int line) {
+            sprEvalState     = 0; // start with secondary OAM clear
+            sprSecOamAddr    = 0;
+            // DON'T read OAMAddress here — it may be written via $2003
+            // during the clear phase (dots 1-64). We capture it at dot 65.
+            sprEvalM         = 0;
+            sprEvalStep      = 0;
+            sprEvalLatch     = 0xFF;
+            sprZeroOnLine    = false;
+            sprEvalFirstDone = false;
+            sprEvalCount     = 0;  // don't touch spriteCount — rendering needs it
+            sprEvalNextLine  = isPreRender ? 0 : line + 1;
+            // DO NOT clear spriteIsZero here — the current scanline's
+            // rendering (dots 1-256) still uses the values loaded at
+            // the previous dot 257. We update them at the next dot 257.
+        }
+
+        /// <summary>
+        /// Per-dot sprite evaluation tick. Called once per dot during dots 1-256
+        /// on visible and pre-render scanlines when rendering is enabled.
+        /// </summary>
+        private static void SprEvalTick(int dot) {
+            // ─── Phase 1: Secondary OAM clear (dots 1-64) ───
+            if (dot <= 64) {
+                if ((dot & 1) == 0) {
+                    // Even dot: write $FF to secondary OAM
+                    secondaryOAM[sprSecOamAddr & 31] = 0xFF;
+                    sprSecOamAddr++;
+                }
+                sprEvalLatch = 0xFF; // $2004 reads see $FF during clear
+                return;
+            }
+
+            // ─── Transition to evaluation at dot 65 ───
+            if (dot == 65) {
+                sprEvalState  = 1; // evaluating
+                sprSecOamAddr = 0;
+                // Capture OAMAddress NOW — writes to $2003 during clear phase take effect
+                sprEvalN      = OAMAddress >> 2;
+                sprEvalStartN = sprEvalN;
+                sprOamStartM  = (byte)(OAMAddress & 3);
+            }
+
+            if (sprEvalState == 3) return; // evaluation complete
 
             var spriteHeight = (PPUCTRL & 0x20) != 0 ? 16 : 8;
 
-            for (int n = 0; n < 64; n++) {
-                var yPos = OAMBuffer[n * 4];
-                var top  = yPos + 1;          // no 8-bit mask: Y=$FF → top=256 → always out of range
-                var diff = nextLine - top;
-                if (diff < 0 || diff >= spriteHeight) continue;
-
-                if (spriteCount < 8) {
-                    secondaryOAM[spriteCount * 4 + 0] = OAMBuffer[n * 4 + 0];
-                    secondaryOAM[spriteCount * 4 + 1] = OAMBuffer[n * 4 + 1];
-                    secondaryOAM[spriteCount * 4 + 2] = OAMBuffer[n * 4 + 2];
-                    secondaryOAM[spriteCount * 4 + 3] = OAMBuffer[n * 4 + 3];
-                    if (n == 0) spriteIsZero[spriteCount] = true;
-                    spriteCount++;
-                } else {
-                    spriteOverflow = true;
-                    break;
+            // ─── Phase 2 & 3: Evaluation / overflow (dots 65-256) ───
+            if ((dot & 1) == 1) {
+                // Odd dot: read from primary OAM into latch
+                int addr;
+                if (sprEvalState == 2) // overflow mode uses N*4 + M
+                    addr = (sprEvalN * 4 + sprEvalM) & 0xFF;
+                else // normal mode: N*4 + misalignment + logical step
+                    addr = (sprEvalN * 4 + sprOamStartM + sprEvalStep) & 0xFF;
+                sprEvalLatch = OAMBuffer[addr];
+            } else {
+                // Even dot: process the read
+                if (sprEvalState == 1) {
+                    // ── Normal evaluation ──
+                    if (sprEvalStep == 0) {
+                        // Y-position range check
+                        var top  = sprEvalLatch + 1;
+                        var diff = sprEvalNextLine - top;
+                        if (diff >= 0 && diff < spriteHeight) {
+                            // Sprite is in range — copy Y to secondary OAM
+                            secondaryOAM[sprSecOamAddr & 31] = sprEvalLatch;
+                            sprSecOamAddr++;
+                            sprEvalStep = 1;
+                            // First evaluation: this sprite is "sprite zero"
+                            if (!sprEvalFirstDone) {
+                                sprZeroOnLine = true;
+                            }
+                            sprEvalFirstDone = true;
+                        } else {
+                            // Not in range — advance to next sprite
+                            sprEvalFirstDone = true;
+                            sprEvalN = (sprEvalN + 1) & 63;
+                            if (sprEvalN == sprEvalStartN)
+                                sprEvalState = 3; // wrapped through all 64
+                        }
+                    } else {
+                        // Steps 1-3: copy remaining bytes to secondary OAM
+                        secondaryOAM[sprSecOamAddr & 31] = sprEvalLatch;
+                        sprSecOamAddr++;
+                        sprEvalStep++;
+                        if (sprEvalStep >= 4) {
+                            sprEvalStep = 0;
+                            sprEvalCount++;
+                            sprEvalN = (sprEvalN + 1) & 63;
+                            if (sprEvalCount >= 8)
+                                sprEvalState = 2; // switch to overflow scan
+                            if (sprEvalN == sprEvalStartN)
+                                sprEvalState = 3; // wrapped around all 64
+                        }
+                    }
+                } else if (sprEvalState == 2) {
+                    // ── Overflow scan (with hardware sprite overflow bug) ──
+                    // Reads byte at N*4+M; on miss, increments BOTH N and M
+                    var top  = sprEvalLatch + 1;
+                    var diff = sprEvalNextLine - top;
+                    if (diff >= 0 && diff < spriteHeight) {
+                        spriteOverflow = true;
+                        sprEvalState = 3; // done
+                    } else {
+                        // The bug: both N and M increment on miss
+                        sprEvalN = (sprEvalN + 1) & 63;
+                        sprEvalM = (byte)((sprEvalM + 1) & 3);
+                        if (sprEvalN == sprEvalStartN)
+                            sprEvalState = 3; // wrapped
+                    }
                 }
             }
         }
@@ -332,15 +439,24 @@ internal static class System {
                 // ─── Y increment at end of visible portion ───
                 if (dot == 256) IncrementFineY();
 
-                // ─── Horizontal scroll reload + sprite eval ───
+                // ─── Per-dot sprite evaluation (dots 1-256) ───
+                if ((isVisible || isPreRender) && dot >= 1 && dot <= 256) {
+                    if (dot == 1) SprEvalInit(isPreRender, line);
+                    SprEvalTick(dot);
+                }
+
+                // ─── Horizontal scroll reload + sprite shift register load ───
                 if (dot == 257) {
                     CopyHorizontalBits();
                     if (isVisible || isPreRender) {
-                        // Real PPU clears OAMADDR during sprite evaluation
+                        // Real PPU clears OAMADDR at dot 257
                         OAMAddress = 0;
-                        var nextLine = isPreRender ? 0 : line + 1;
-                        EvaluateSprites(nextLine);
-                        LoadSpriteShifters(nextLine);
+                        // Apply evaluation results for the NEXT scanline's rendering
+                        spriteCount = sprEvalCount;
+                        for (int i = 0; i < 8; i++) spriteIsZero[i] = false;
+                        if (sprZeroOnLine && spriteCount > 0)
+                            spriteIsZero[0] = true;
+                        LoadSpriteShifters(sprEvalNextLine);
                     }
                 }
 
@@ -536,8 +652,15 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2004_OAMDATA() {
-                ppuLatch                = Data;
-                OAMBuffer[OAMAddress++] = Data;
+                ppuLatch = Data;
+                // During rendering, writes to $2004 don't modify OAM.
+                // Instead, OAMAddress gets a glitchy increment: +4 with
+                // the low 2 bits cleared (only the high 6 bits bump).
+                if (RenderingEnabled && (_line < 240 || _line == 261)) {
+                    OAMAddress = (byte)((OAMAddress + 4) & 0xFC);
+                } else {
+                    OAMBuffer[OAMAddress++] = Data;
+                }
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -612,12 +735,26 @@ internal static class System {
             
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2004_OAMDATA() {
-                Data                 = OAMBuffer[OAMAddress];
-                // Attribute bytes (byte 2 of each 4-byte entry) have bits 2-4
-                // unimplemented — they always read as 0.
-                if ((OAMAddress & 0x03) == 2)
-                    Data &= 0xE3;
-                Registers.ppuLatch   = Data;   // PPU latch refreshes with the byte returned
+                // During rendering, $2004 reads come from the evaluation pipeline
+                if (RenderingEnabled && (_line < 240 || _line == 261)) {
+                    if (_dot >= 1 && _dot <= 64) {
+                        // Secondary OAM clear phase: always returns $FF
+                        Data = 0xFF;
+                    } else if (_dot >= 65 && _dot <= 256) {
+                        // Evaluation phase: returns the current evaluation latch
+                        Data = sprEvalLatch;
+                    } else {
+                        Data = OAMBuffer[OAMAddress];
+                        // Attribute byte masking only applies to normal OAM reads
+                        if ((OAMAddress & 0x03) == 2) Data &= 0xE3;
+                    }
+                } else {
+                    Data = OAMBuffer[OAMAddress];
+                    // Attribute bytes (byte 2 of each 4-byte entry) have bits 2-4
+                    // unimplemented — they always read as 0.
+                    if ((OAMAddress & 0x03) == 2) Data &= 0xE3;
+                }
+                Registers.ppuLatch = Data;
             }
 
             internal static void DMA() {
@@ -1764,7 +1901,7 @@ internal static class System {
                     if (Quit) return;
                 }
 
-                if ((untilNextSample -= secondsPerDot) <= 0d) {
+                if (!Program.NoAudio && (untilNextSample -= secondsPerDot) <= 0d) {
                     untilNextSample  += 1d / SamplingFrequency;
                     SampleBuffer.Add(Program.AudioVolume *
                                      Program.AudioProcessor.PostProcessSample(APU.GetPCMSample()));
@@ -1779,9 +1916,9 @@ internal static class System {
                 // produce no video and silence.
                 Renderer.Present();
 
-                if (Throttle == 1f)
+                if (!Program.NoAudio && Throttle == 1f)
                     Audio.Drain(SampleBuffer);
-                else
+                else if (!Program.NoAudio)
                     SampleBuffer.Clear();
 
                 frames++;
