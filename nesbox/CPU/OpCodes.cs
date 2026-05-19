@@ -146,7 +146,7 @@ internal static class OpCodes {
         /* 17 slo d+x */ () => DirectPageIndexed(Register.X, SLO),
         /* 18 clc     */ CLC,
         /* 19 ora a+y */ () => AbsoluteIndexed(Register.Y, ORA),
-        /* 1a nop     */ __NOP,
+        /* 1a nop     */ __NOP_Implied,
         /* 1b slo a+y */ () => AbsoluteIndexed(Register.Y, SLO),
         /* 1c nop a+x */ () => AbsoluteIndexed(Register.X, NOP),
         /* 1d ora a+x */ () => AbsoluteIndexed(Register.X, ORA),
@@ -227,7 +227,7 @@ internal static class OpCodes {
         /* 37 rla d+x */ () => DirectPageIndexed(Register.X, RLA),
         /* 38 sec     */ SEC,
         /* 39 and a+y */ () => AbsoluteIndexed(Register.Y, AND),
-        /* 3a nop     */ __NOP,
+        /* 3a nop     */ __NOP_Implied,
         /* 3b rla a+y */ () => AbsoluteIndexed(Register.Y, RLA),
         /* 3c nop a+x */ () => AbsoluteIndexed(Register.X, NOP),
         /* 3d and a+x */ () => AbsoluteIndexed(Register.X, AND),
@@ -269,7 +269,7 @@ internal static class OpCodes {
         /* 57 sre d+x */ () => DirectPageIndexed(Register.X, SRE),
         /* 58 cli     */ CLI,
         /* 59 eor a+y */ () => AbsoluteIndexed(Register.Y, EOR),
-        /* 5a nop     */ __NOP,
+        /* 5a nop     */ __NOP_Implied,
         /* 5b sre a+y */ () => AbsoluteIndexed(Register.Y, SRE),
         /* 5c nop a+x */ () => AbsoluteIndexed(Register.X, NOP),
         /* 5d eor a+x */ () => AbsoluteIndexed(Register.X, EOR),
@@ -311,7 +311,7 @@ internal static class OpCodes {
         /* 77 rra d+x */ () => DirectPageIndexed(Register.X, RRA),
         /* 78 sei     */ SEI,
         /* 79 adc a+y */ () => AbsoluteIndexed(Register.Y, ADC),
-        /* 7a nop     */ __NOP,
+        /* 7a nop     */ __NOP_Implied,
         /* 7b rra a+y */ () => AbsoluteIndexed(Register.Y, RRA),
         /* 7c nop a+x */ () => AbsoluteIndexed(Register.X, NOP),
         /* 7d abs a+x */ () => AbsoluteIndexed(Register.X, ADC),
@@ -437,7 +437,7 @@ internal static class OpCodes {
         /* d7 dcp d+x */ () => DirectPageIndexed(Register.X, DCP),
         /* d8 cld     */ CLD,
         /* d9 cmp a+y */ () => AbsoluteIndexed(Register.Y, CMP),
-        /* da nop     */ __NOP,
+        /* da nop     */ __NOP_Implied,
         /* db dcp a+y */ () => AbsoluteIndexed(Register.Y, DCP),
         /* dc nop a,x */ () => AbsoluteIndexed(Register.X, NOP),
         /* dd cmp a+x */ () => AbsoluteIndexed(Register.X, CMP),
@@ -458,7 +458,7 @@ internal static class OpCodes {
         /* e7 isc d   */ () => DirectPage(ISC),
         /* e8 inx     */ INX,
         /* e9 sbc #   */ () => Immediate(SBC),
-        /* ea nop     */ __NOP,
+        /* ea nop     */ __NOP_Implied,
         /* eb sbc #   */ () => Immediate(SBC),
         /* ec cpx a   */ () => Absolute(CPX),
         /* ed sbc a   */ () => Absolute(SBC),
@@ -479,7 +479,7 @@ internal static class OpCodes {
         /* f7 isc d+x */ () => DirectPageIndexed(Register.X, ISC),
         /* f8 sed     */ SED,
         /* f9 sbc a+y */ () => AbsoluteIndexed(Register.Y, SBC),
-        /* fa nop     */ __NOP,
+        /* fa nop     */ __NOP_Implied,
         /* fb isc a+y */ () => AbsoluteIndexed(Register.Y, ISC),
         /* fc nop a,x */ () => AbsoluteIndexed(Register.X, NOP),
         /* fd sbc a+x */ () => AbsoluteIndexed(Register.X, SBC),
@@ -575,6 +575,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void CLC() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.c = false;
         cycle      = 0xff;
     }
@@ -626,6 +628,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void SEC() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.c = true;
         cycle      = 0xff;
     }
@@ -747,6 +751,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void CLI() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.i = false;
         cycle      = 0xff;
     }
@@ -884,12 +890,16 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void SEI() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.i = true;
         cycle      = 0xff;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void DEY() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.Y--;
         cycle = 0xff;
         NonArithmeticProcessorFlagSets(Register.Y);
@@ -897,6 +907,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TXA() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.AC = Register.X;
         cycle       = 0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
@@ -904,6 +916,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TYA() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.AC = Register.Y;
         cycle       = 0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
@@ -911,12 +925,16 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TXS() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.S = Register.X;
         cycle      = 0xff;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TAY() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.Y = Register.AC;
         cycle      = 0xff;
         NonArithmeticProcessorFlagSets(Register.Y);
@@ -924,6 +942,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TAX() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.X = Register.AC;
         cycle      = 0xff;
         NonArithmeticProcessorFlagSets(Register.X);
@@ -931,12 +951,16 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void CLV() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.v = false;
         cycle      = 0xff;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void TSX() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.X = Register.S;
         cycle      = 0xff;
         NonArithmeticProcessorFlagSets(Register.X);
@@ -944,6 +968,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void INY() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.Y++;
         cycle = 0xff;
         NonArithmeticProcessorFlagSets(Register.Y);
@@ -951,6 +977,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void DEX() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.X--;
         cycle = 0xff;
         NonArithmeticProcessorFlagSets(Register.X);
@@ -958,12 +986,16 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void CLD() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.d = false;
         cycle      = 0xff;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void INX() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.X++;
         cycle = 0xff;
         NonArithmeticProcessorFlagSets(Register.X);
@@ -971,6 +1003,8 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void SED() {
+        Address = PC;
+        Memory.CPU_Read();
         Register.d = true;
         cycle      = 0xff;
     }
@@ -1028,6 +1062,7 @@ internal static class OpCodes {
     }
 
     private static                 void   __NOP() { cycle = 0xff; }
+    private static                 void   __NOP_Implied() { Address = PC; Memory.CPU_Read(); cycle = 0xff; }
     private static readonly unsafe Opcode NOP = new(&__NOP, RWKind.Read);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1258,33 +1293,63 @@ internal static class OpCodes {
     private static readonly unsafe Opcode ANC = new(&__ANC, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void __ALR() {
-        __AND();
-        LSRA();
-    }
-    
-    private static readonly unsafe Opcode ALR = new(&__ALR, RWKind.Read);
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void LSRA() {
+    private static void LSR_AC() {
         Register.c  =   (Register.AC & 1) is 1;
         Register.AC >>= 1;
-        cycle       =   0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ASLA() {
+    private static void ASL_AC() {
         Register.c  =   (Register.AC & 0x80) is 0x80;
         Register.AC <<= 1;
-        cycle       =   0xff;
         NonArithmeticProcessorFlagSets(Register.AC);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ROR_AC() {
+        var c      = (byte)(Register.AC & 1);
+        Register.AC = (byte)((Register.c ? 0x80 : 0x00) | (Register.AC >> 1));
+        Register.c  = c is 1;
+        NonArithmeticProcessorFlagSets(Register.AC);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ROL_AC() {
+        var c      = (byte)(Register.AC                          >> 7);
+        Register.AC = (byte)((Register.c ? 1 : 0) | (Register.AC << 1));
+        Register.c  = c is 1;
+        NonArithmeticProcessorFlagSets(Register.AC);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void __ALR() {
+        __AND();
+        LSR_AC();
+    }
+
+    private static readonly unsafe Opcode ALR = new(&__ALR, RWKind.Read);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void LSRA() {
+        Address = PC;
+        Memory.CPU_Read();
+        LSR_AC();
+        cycle = 0xff;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ASLA() {
+        Address = PC;
+        Memory.CPU_Read();
+        ASL_AC();
+        cycle = 0xff;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __ARR() {
         __AND();
-        RORA();
+        ROR_AC();
         Register.c = (Register.AC >> 6 & 1) is 1;
         Register.v = ((Register.AC >> 6 & 1) ^ (Register.AC >> 5 & 1)) is 1;
     }
@@ -1297,7 +1362,7 @@ internal static class OpCodes {
         Register.X = (byte)result;
         NonArithmeticProcessorFlagSets(Register.X);
     }
-    
+
     private static readonly unsafe Opcode AXS = new(&__AXS, RWKind.Read);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1310,20 +1375,18 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void RORA() {
-        var c      = (byte)(Register.AC & 1);
-        Register.AC = (byte)((Register.c ? 0x80 : 0x00) | (Register.AC >> 1));
-        Register.c  = c is 1;
-        cycle       = 0xff;
-        NonArithmeticProcessorFlagSets(Register.AC);
+        Address = PC;
+        Memory.CPU_Read();
+        ROR_AC();
+        cycle = 0xff;
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ROLA() {
-        var c      = (byte)(Register.AC                          >> 7);
-        Register.AC = (byte)((Register.c ? 1 : 0) | (Register.AC << 1));
-        Register.c  = c is 1;
-        cycle       = 0xff;
-        NonArithmeticProcessorFlagSets(Register.AC);
+        Address = PC;
+        Memory.CPU_Read();
+        ROL_AC();
+        cycle = 0xff;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

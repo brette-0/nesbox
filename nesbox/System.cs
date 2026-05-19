@@ -135,7 +135,7 @@ internal static class System {
 
             for (int n = 0; n < 64; n++) {
                 var yPos = OAMBuffer[n * 4];
-                var top  = (yPos + 1) & 0xFF;
+                var top  = yPos + 1;          // no 8-bit mask: Y=$FF → top=256 → always out of range
                 var diff = nextLine - top;
                 if (diff < 0 || diff >= spriteHeight) continue;
 
@@ -174,7 +174,7 @@ internal static class System {
                 sprXCounter[i] = xPos;
 
                 var flipV = (attr & 0x80) != 0;
-                var row   = nextLine - ((yPos + 1) & 0xFF);
+                var row   = nextLine - (yPos + 1);
 
                 ushort patAddr;
                 if (spriteHeight == 16) {
@@ -288,7 +288,7 @@ internal static class System {
 
                     // ── Sprite zero hit ──
                     if (isSprZero && bgPixel != 0 && sprPixel != 0
-                        && dot >= 2 && dot < 256) {
+                        && dot >= 1 && dot <= 255) {
                         spriteZeroHit = true;
                     }
 
@@ -313,7 +313,7 @@ internal static class System {
                 // ─── BG shift register clock (dots 1-256 and 321-336) ───
                 if ((dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336)) {
                     bgShiftLo     <<= 1;
-                    bgShiftHi     <<= 1;
+                    bgShiftHi     = (ushort)((bgShiftHi << 1) | 1); // serial-in is 1 for high plane
                     bgAttrShiftLo <<= 1;
                     bgAttrShiftHi <<= 1;
 
@@ -336,6 +336,8 @@ internal static class System {
                 if (dot == 257) {
                     CopyHorizontalBits();
                     if (isVisible || isPreRender) {
+                        // Real PPU clears OAMADDR during sprite evaluation
+                        OAMAddress = 0;
                         var nextLine = isPreRender ? 0 : line + 1;
                         EvaluateSprites(nextLine);
                         LoadSpriteShifters(nextLine);
@@ -611,6 +613,10 @@ internal static class System {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2004_OAMDATA() {
                 Data                 = OAMBuffer[OAMAddress];
+                // Attribute bytes (byte 2 of each 4-byte entry) have bits 2-4
+                // unimplemented — they always read as 0.
+                if ((OAMAddress & 0x03) == 2)
+                    Data &= 0xE3;
                 Registers.ppuLatch   = Data;   // PPU latch refreshes with the byte returned
             }
 
@@ -975,6 +981,7 @@ internal static class System {
 
                 if (!bufferEmpty || bytesRemaining is 0 || dmaRequested || inDMA) return;
                 dmaRequested = true;
+                dmaDelayCount = 1;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1028,17 +1035,9 @@ internal static class System {
                 if (!dmaRequested && !inDMA) return;
 
                 if (dmaRequested && !inDMA) {
-                    if (!enabled) { dmaDelayCount++; return; }
                     inDMA = true;
                     dmaRequested = false;
-                    // DMC DMA steals 4 CPU cycles on a read (halt + alignment + put + get),
-                    // or 3 on a write (halt + put + get).  The first DMA after enable uses
-                    // the accumulated delay count to decide; subsequent DMAs default to 4
-                    // because the CPU is almost always on a read cycle when the timer fires
-                    // during normal sample playback.
-                    dmaCycleCount = dmaDelayCount > 0
-                        ? (byte)((dmaDelayCount & 1) is 1 ? 3 : 4)
-                        : (byte)4;
+                    dmaCycleCount = dmaDelayCount > 0 ? (byte)4 : (byte)3;
                     dmaDelayCount = 0;
                     RDY = true;
                     return;
@@ -1455,6 +1454,7 @@ internal static class System {
 
                     if (!PCM.bufferEmpty || PCM.bytesRemaining is 0 || PCM.dmaRequested || PCM.inDMA) return;
                     PCM.dmaRequested = true;
+                    PCM.dmaDelayCount = 1;
                 } else {
                     PCM.enabled = false;
                     PCM.enableDelay = 0;
@@ -1471,7 +1471,7 @@ internal static class System {
             }
 
             internal static void R4015_Status() {
-                var resp = (byte)(OpenBus & 0x20); // bit 5 is open bus
+                var resp = (byte)(Data & 0x20); // bit 5 is open bus (internal data bus, not external)
                 
                 resp |= (byte)(Pulse1.Length      is not 0 ? 0x01 : 0);
                 resp |= (byte)(Pulse2.Length      is not 0 ? 0x02 : 0);
