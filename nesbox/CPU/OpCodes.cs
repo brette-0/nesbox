@@ -1169,7 +1169,7 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHA() {
-        var h = (byte)(_unfixedADH + 1);
+        var h = _dmaHaltedDuringInstruction ? (byte)0xFF : (byte)(_unfixedADH + 1);
         Data = (byte)(Register.AC & Register.X & h);
         if (_pageOverlap) ADH = Data;
     }
@@ -1177,7 +1177,7 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHX() {
-        var h = (byte)(_unfixedADH + 1);
+        var h = _dmaHaltedDuringInstruction ? (byte)0xFF : (byte)(_unfixedADH + 1);
         Data = (byte)(Register.X & h);
         if (_pageOverlap) ADH = Data;
     }
@@ -1185,7 +1185,7 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __SHY() {
-        var h = (byte)(_unfixedADH + 1);
+        var h = _dmaHaltedDuringInstruction ? (byte)0xFF : (byte)(_unfixedADH + 1);
         Data = (byte)(Register.Y & h);
         if (_pageOverlap) ADH = Data;
     }
@@ -1193,7 +1193,7 @@ internal static class OpCodes {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void __TAS() {
-        var h = (byte)(_unfixedADH + 1);
+        var h = _dmaHaltedDuringInstruction ? (byte)0xFF : (byte)(_unfixedADH + 1);
         Register.S = (byte)(Register.AC & Register.X);
         Data       = (byte)(Register.S & h);
         if (_pageOverlap) ADH = Data;

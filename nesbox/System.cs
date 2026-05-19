@@ -324,6 +324,9 @@ internal static class System {
             var dot  = _dot;
             var line = _line;
 
+            vblankJustSet     = false;
+            vblankJustCleared = false;
+
             if (dot == 0 && line == 0) Video.ResetStream();
 
             var isVisible   = line < 240;
@@ -332,16 +335,22 @@ internal static class System {
 
             // ── Pre-render clear ─────────────────────────────────────
             if (isPreRender && dot == 1) {
-                inVblank       = false;
-                nmiLine        = false;
-                spriteZeroHit  = false;
-                spriteOverflow = false;
+                vblankJustCleared = inVblank; // remember if VBlank was set
+                inVblank         = false;
+                nmiLine          = false;
+                spriteZeroHit    = false;
+                spriteOverflow   = false;
+                vblankSuppressed = false;
             }
 
             // ── VBlank set ───────────────────────────────────────────
             if (line == 241 && dot == 1 && virtualTime >= warmupEndDot) {
-                inVblank = true;
-                EdgeDetectNMI();
+                vblankJustSet       = true;
+                if (!vblankSuppressed) {
+                    inVblank = true;
+                    EdgeDetectNMI();
+                }
+                vblankSuppressed = false;
             }
 
             // ── Rendering ────────────────────────────────────────────
@@ -551,6 +560,12 @@ internal static class System {
             var newLine = inVblank && NMIEnabled;
             if (newLine && !nmiLine)
                 NMIAsserted = true;
+            else if (!newLine && nmiLine && !_nmiPending)
+                // Falling edge before the CPU latched the NMI:
+                // the /NMI line went low (e.g. W2000 disabled NMI)
+                // before the CPU's edge-detector committed the
+                // interrupt.  Cancel the assertion.
+                NMIAsserted = false;
             nmiLine = newLine;
         }
 
@@ -597,20 +612,44 @@ internal static class System {
             // write-only registers ($2000/$2001/$2003/$2005/$2006) return the
             // latch unchanged. The unused low 5 bits of $2002 reads come from
             // here too. $2004 and $2007 reads refill the latch with the byte
-            // they return. We don't model the analog decay (3-30 ms) because
-            // games that rely on decay are vanishingly rare.
+            // they return.
             //
-            // Before this implementation, the emulator used the shared `Data`
-            // bus field as a proxy — which is wrong: `Data` reflects the LAST
-            // CPU cycle's bus value (often an operand byte), not the PPU's
-            // own latch. Games that read open-bus PPU bits would see a
-            // different value here than on real hardware.
+            // Decay: the PPU data bus is capacitive — bits that haven't been
+            // refreshed eventually decay to 0.  We track the PPU cycle at
+            // which each bit was last driven and clear it after a fixed
+            // number of PPU cycles (~600 000 ≈ 6.7 frames).
             // ----------------------------------------------------------------
             internal static byte ppuLatch;
 
+            /// PPU-cycle timestamp of last refresh, per bit.
+            private static ulong[] _latchBitTime = new ulong[8];
+            private const ulong LatchDecayCycles = 600_000; // ~6.7 frames
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static void RefreshLatch(byte value) {
+                var now = virtualTime;
+                for (int b = 0; b < 8; b++) {
+                    if (((value >> b) & 1) != 0)
+                        _latchBitTime[b] = now;
+                }
+                ppuLatch = value;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static byte ReadLatch() {
+                var now = virtualTime;
+                byte result = ppuLatch;
+                for (int b = 0; b < 8; b++) {
+                    if (now - _latchBitTime[b] >= LatchDecayCycles)
+                        result &= (byte)~(1 << b);
+                }
+                ppuLatch = result;   // write back decayed value
+                return result;
+            }
+
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2000_PPUCRTL() {
-                ppuLatch   = Data;
+                RefreshLatch(Data);
                 PPUCTRL    = Data;
                 NMIEnabled = (Data & 0x80) is 0x80;
                 // Nametable select bits drop into t bits 10-11.
@@ -620,20 +659,44 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2001_PPUMASK() {
-                ppuLatch = Data;
+                RefreshLatch(Data);
                 PPUMASK  = Data;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void R2002_PPUSTATUS() {
+                // ── VBlank suppression (pre-emptive + retroactive) ──
+                // Reading $2002 on the same CPU cycle that VBlank is
+                // set suppresses the flag (bit 7 returns 0).
+                //
+                // Pre-emptive: VBlank hasn't fired yet but will on the
+                // next PPU step.  Guard so PPU.Step() won't set it.
+                if (_line == 241 && _dot == 1 && virtualTime >= warmupEndDot) {
+                    vblankSuppressed = true;
+                }
+                // Retroactive: VBlank was the last PPU step before
+                // this CPU step.  Suppress the flag but preserve
+                // NMIAsserted — on real hardware the NMI edge has
+                // already been captured even though the flag is
+                // suppressed.
+                if (vblankJustSet) {
+                    inVblank = false;
+                    nmiLine  = false;
+                }
+
                 // Low 5 bits come from the PPU's internal latch (open bus on
                 // the unused bits). Bits 7-5 are the live status flags.
                 // Reading $2002 only refreshes bits 7-5 of the latch.
-                Data        = (byte)(ppuLatch & 0x1f);
-                Data       |= (byte)(inVblank       ? 0x80 : 0x00);
+                //
+                // vblankJustCleared: if the pre-render clear just ran this
+                // tick, the CPU should still see VBlank as set (the clear
+                // hasn't "happened yet" from the CPU's perspective within
+                // the same cycle — matching real hardware behavior).
+                Data        = (byte)(ReadLatch() & 0x1f);
+                Data       |= (byte)((inVblank || vblankJustCleared) ? 0x80 : 0x00);
                 Data       |= (byte)(spriteZeroHit  ? 0x40 : 0x00);
                 Data       |= (byte)(spriteOverflow ? 0x20 : 0x00);
-                ppuLatch    = (byte)((ppuLatch & 0x1F) | (Data & 0xE0));
+                RefreshLatch((byte)((ppuLatch & 0x1F) | (Data & 0xE0)));
                 inVblank    = false;
                 nmiLine     = false;
                 // Do NOT clear NMIAsserted here. NMIAsserted is the latched
@@ -646,13 +709,13 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2003_OAMADDR() {
-                ppuLatch   = Data;
+                RefreshLatch(Data);
                 OAMAddress = Data;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2004_OAMDATA() {
-                ppuLatch = Data;
+                RefreshLatch(Data);
                 // During rendering, writes to $2004 don't modify OAM.
                 // Instead, OAMAddress gets a glitchy increment: +4 with
                 // the low 2 bits cleared (only the high 6 bits bump).
@@ -665,7 +728,7 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2005_PPUSCROLL() {
-                ppuLatch = Data;
+                RefreshLatch(Data);
                 if (!latch) {
                     // First write: fine X + coarse X
                     fineX        = (byte)(Data & 0x07);
@@ -683,7 +746,7 @@ internal static class System {
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal static void W2006_PPUADDR() {
-                ppuLatch = Data;
+                RefreshLatch(Data);
                 if (!latch) {
                     // First write: high 6 bits of t. Bit 14 cleared.
                     tempVRAMAddr = (ushort)((tempVRAMAddr & 0x00FF) | ((Data & 0x3F) << 8));
@@ -698,10 +761,15 @@ internal static class System {
             }
 
             internal static void W2007_PPUDATA() {
-                ppuLatch = Data;
+                RefreshLatch(Data);
                 Address  = v;
                 PPUBusWrite(v, Data);
-                v = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
+                if (RenderingEnabled && (_line < 240 || _line == 261)) {
+                    IncrementCoarseX();
+                    IncrementFineY();
+                } else {
+                    v = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
+                }
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -713,11 +781,25 @@ internal static class System {
                     ppuDataBuffer = PPUBusRead(v);
                 } else {
                     // Palette: direct read; bits 6-7 are open bus from PPU latch.
-                    Data          = (byte)((PPUBusRead(v) & 0x3F) | (ppuLatch & 0xC0));
+                    // When greyscale is enabled (PPUMASK bit 0), the lower 4 bits
+                    // of the palette value read back as zero (masked with $30).
+                    var raw       = (byte)(PPUBusRead(v) & 0x3F);
+                    if ((PPUMASK & 0x01) is not 0) raw &= 0x30;
+                    Data          = (byte)(raw | (ppuLatch & 0xC0));
                     ppuDataBuffer = PPUBusRead((ushort)(v - 0x1000));
                 }
-                ppuLatch = Data;        // latch refreshes with the byte just returned
-                v        = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
+                RefreshLatch(Data);        // latch refreshes with the byte just returned
+
+                // v increment: during rendering, a $2007 read triggers
+                // both the coarse-X and fine-Y increments simultaneously
+                // (the same pair that normally fires at dots 256/257).
+                // Outside of rendering, the normal +1 or +32 applies.
+                if (RenderingEnabled && (_line < 240 || _line == 261)) {
+                    IncrementCoarseX();
+                    IncrementFineY();
+                } else {
+                    v = (ushort)((v + (((PPUCTRL & 0x04) is 0) ? 1 : 32)) & 0x3FFF);
+                }
             }
         }
 
@@ -754,7 +836,7 @@ internal static class System {
                     // unimplemented — they always read as 0.
                     if ((OAMAddress & 0x03) == 2) Data &= 0xE3;
                 }
-                Registers.ppuLatch = Data;
+                Registers.RefreshLatch(Data);
             }
 
             internal static void DMA() {
@@ -951,6 +1033,15 @@ internal static class System {
         internal static bool   inDMA;
         internal static bool   inVblank;
         internal static bool   nmiLine;
+        /// <summary>
+        /// Set during the PPU dot that VBlank flag is raised (line 241, dot 1).
+        /// If the CPU reads $2002 on that same tick, VBlank is "suppressed":
+        /// the read returns $00 and the flag is never actually set.
+        /// Cleared at the start of every PPU.Step().
+        /// </summary>
+        private static bool    vblankJustSet;
+        private static bool    vblankJustCleared;
+        private static bool    vblankSuppressed;
         internal static bool   oamHaltCycle = false;
         internal static byte   OAMAddress;
         internal static byte   OAMData;
@@ -1721,13 +1812,13 @@ internal static class System {
                 // data bus. The latch reflects the last byte the PPU put on its bus —
                 // any write to any PPU register, or any byte returned by $2002/$2004/$2007.
                 switch (address & 0x2007) {
-                    case PPUCTRL:   data = PPU.Registers.ppuLatch; OpenBus = data; goto SendReadToCart;
-                    case PPUMASK:   data = PPU.Registers.ppuLatch; OpenBus = data; goto SendReadToCart;
+                    case PPUCTRL:   data = PPU.Registers.ReadLatch(); OpenBus = data; goto SendReadToCart;
+                    case PPUMASK:   data = PPU.Registers.ReadLatch(); OpenBus = data; goto SendReadToCart;
                     case PPUSTATUS: PPU.Registers.R2002_PPUSTATUS(); data = Data; OpenBus = data; goto SendReadToCart;
-                    case OAMADDR:   data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case OAMADDR:   data = PPU.Registers.ReadLatch();            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
                     case OAMDATA:   PPU.OAM.R2004_OAMDATA();         data = Data; OpenBus = data; goto SendReadToCart;
-                    case PPUSCROLL: data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
-                    case PPUADDR:   data = PPU.Registers.ppuLatch;            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUSCROLL: data = PPU.Registers.ReadLatch();            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
+                    case PPUADDR:   data = PPU.Registers.ReadLatch();            OpenBus = data; goto SendReadToCart; // write-only, returns PPU latch
                     case PPUDATA:   PPU.Registers.R2007_PPUDATA(); data = Data; OpenBus = data; goto SendReadToCart;
                     default:
                         Console.WriteLine("[CPU] [Memory] [PPU] Your programmer does not know how to use a mask");
@@ -1774,7 +1865,7 @@ internal static class System {
                     switch (Address & 0x2007) {
                         case PPUCTRL:   PPU.Registers.W2000_PPUCRTL();   goto SendAddressToCart;
                         case PPUMASK:   PPU.Registers.W2001_PPUMASK();   goto SendAddressToCart;
-                        case PPUSTATUS: PPU.Registers.ppuLatch = Data; goto SendAddressToCart;
+                        case PPUSTATUS: PPU.Registers.RefreshLatch(Data); goto SendAddressToCart;
                         case OAMADDR:   PPU.Registers.W2003_OAMADDR();   goto SendAddressToCart;
                         case OAMDATA:   PPU.Registers.W2004_OAMDATA();   goto SendAddressToCart;
                         case PPUSCROLL: PPU.Registers.W2005_PPUSCROLL(); goto SendAddressToCart;
@@ -1987,19 +2078,31 @@ internal static class System {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void Step() {
-        if (RDY) return;
+        if (RDY) {
+            if (cycle > 0) _dmaHaltedDuringInstruction = true;
+            return;
+        }
         if (cycle is 0) {
+            _dmaHaltedDuringInstruction = false;
             if (Reset) {
                 Console.WriteLine("[CPU] Resetting CPU");
                 OpHandle = StepReset;
                 goto HandleInstruction;
             }
-            
-            if (NMIAsserted) {
+
+            // ── NMI service ──────────────────────────────────
+            // Fire a pending NMI BEFORE latching new edges.
+            if (_nmiPending) {
+                _nmiPending = false;
                 NMIAsserted = false;
                 Vector      = Vectors.NMI;
                 OpHandle    = Interrupt;
                 goto HandleInstruction;
+            }
+
+            // ── NMI latch (at cycle 0, after service check) ─
+            if (NMIAsserted && !_nmiPending) {
+                _nmiPending = true;
             }
 
             if (_irqDetected) {
@@ -2033,9 +2136,37 @@ internal static class System {
             cycle++;
             return;
         }
-        
+
         HandleInstruction:
             OpHandle();
+
+            // ── NMI latch (non-cycle-0, post-execute) ───────────
+            // Latch NMIAsserted → _nmiPending AFTER OpHandle runs,
+            // but only on non-last cycles (cycle != 0xFF).
+            //
+            //  • PPU-sourced NMI on non-last cycle:
+            //    NMIAsserted was set before CPU.Step entered.
+            //    Latched here → fires at NEXT cycle-0.
+            //    Result: 1-instruction-boundary delay. ✓
+            //
+            //  • PPU-sourced NMI on last cycle (cycle == 0xFF):
+            //    NOT latched here — falls through to the cycle-0
+            //    latch on the next CPU.Step.  Fires one cycle-0
+            //    later → 2-instruction-boundary delay. ✓
+            //
+            //  • CPU-sourced NMI (W2000 write during OpHandle):
+            //    NMIAsserted set inside OpHandle → caught here
+            //    if not last cycle; otherwise deferred. ✓
+            //
+            //  • During interrupt/reset handlers: skip — NMI
+            //    hijack is handled in Interrupt case 5.
+            if (NMIAsserted && !_nmiPending
+                && cycle != 0xFF
+                && OpHandle != Interrupt
+                && OpHandle != StepReset) {
+                _nmiPending = true;
+            }
+
             #if DEBUG
             if (cycle is 0xff && OpHandle != Interrupt && OpHandle != StepReset) {
                 //Console.WriteLine($"{PC:x4}: {OpCodes.Mnemonics[Register.IR]} {Address:x4} {Data:x2}");
@@ -2172,6 +2303,14 @@ internal static class System {
     internal static ushort Vector;
     internal static bool   CPU_IRQ;
     internal static bool   NMIAsserted;
+    /// <summary>
+    /// Models the real 6502 NMI polling delay: NMI is sampled at each
+    /// instruction boundary and serviced one boundary later.  An edge
+    /// that arrives during the last cycle of instruction N is not
+    /// detected until instruction N+1's penultimate-cycle poll, so the
+    /// CPU takes NMI only after N+1 completes.
+    /// </summary>
+    internal static bool   _nmiPending;
     private static  bool   Reset;
     internal static bool   prevInterruptInhibit;
     internal static bool   _irqDetected;
@@ -2179,6 +2318,7 @@ internal static class System {
 
     internal static Action OpHandle;
     internal static byte   cycle;
+    internal static bool   _dmaHaltedDuringInstruction;
 
     internal static ushort Address;
     internal static byte   Data;

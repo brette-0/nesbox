@@ -52,7 +52,7 @@ public class StandardController_NTSCU : API.IIO {
             _shift = 0;
             if (gp is not 0) {
                 if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))     _shift |= 0x01;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.East))      _shift |= 0x02;
+                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.West))      _shift |= 0x02;
                 if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))      _shift |= 0x04;
                 if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))     _shift |= 0x08;
                 if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))    _shift |= 0x10;
