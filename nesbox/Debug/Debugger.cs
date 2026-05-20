@@ -52,7 +52,7 @@ public static class Debugger {
 
     internal static byte CpuPeek(ushort address) {
         if (address < 0x2000)
-            return System.Memory.SystemRAM[address & 0x7FF];
+            return Emulator.System.Memory.SystemRAM[address & 0x7FF];
 
         if (address < 0x4020)
             // Hardware register range — return high byte (no side-effects).
@@ -84,30 +84,30 @@ public static class Debugger {
     // substituting 0.
     // -----------------------------------------------------------------------
     internal static int? ReadRegister(string name) => name.ToUpperInvariant() switch {
-        "A"       => System.Register.AC,
-        "X"       => System.Register.X,
-        "Y"       => System.Register.Y,
+        "A" => Emulator.System.Register.AC,
+        "X" => Emulator.System.Register.X,
+        "Y" => Emulator.System.Register.Y,
         "S" or
-        "SP"      => System.Register.S,
-        "PC"      => System.PC,
+        "SP"      => Emulator.System.Register.S,
+        "PC"      => Emulator.System.PC,
         "P"       => (byte)(
-                        (System.Register.c ? 1 : 0) << 0 |
-                        (System.Register.z ? 1 : 0) << 1 |
-                        (System.Register.i ? 1 : 0) << 2 |
-                        (System.Register.d ? 1 : 0) << 3 |
-                        (System.Register.b ? 1 : 0) << 4 |
-                        1                           << 5 |   // unused bit, always 1
-                        (System.Register.v ? 1 : 0) << 6 |
-                        (System.Register.n ? 1 : 0) << 7),
+                        (Emulator.System.Register.c ? 1 : 0)          << 0 |
+                        (Emulator.System.Register.z ? 1 : 0) << 1 |
+                        (Emulator.System.Register.i ? 1 : 0) << 2 |
+                        (Emulator.System.Register.d ? 1 : 0) << 3 |
+                        (Emulator.System.Register.b ? 1 : 0) << 4 |
+                        1                                    << 5 |   // unused bit, always 1
+                        (Emulator.System.Register.v ? 1 : 0) << 6 |
+                        (Emulator.System.Register.n ? 1 : 0) << 7),
         // Individual flags — 0 or 1.
-        "N"       => System.Register.n ? 1 : 0,
-        "V"       => System.Register.v ? 1 : 0,
-        "B"       => System.Register.b ? 1 : 0,
-        "D"       => System.Register.d ? 1 : 0,
-        "I"       => System.Register.i ? 1 : 0,
-        "Z"       => System.Register.z ? 1 : 0,
-        "C"       => System.Register.c ? 1 : 0,
-        _         => null
+        "N" => Emulator.System.Register.n ? 1 : 0,
+        "V" => Emulator.System.Register.v ? 1 : 0,
+        "B" => Emulator.System.Register.b ? 1 : 0,
+        "D" => Emulator.System.Register.d ? 1 : 0,
+        "I" => Emulator.System.Register.i ? 1 : 0,
+        "Z" => Emulator.System.Register.z ? 1 : 0,
+        "C" => Emulator.System.Register.c ? 1 : 0,
+        _   => null
     };
 
     // -----------------------------------------------------------------------
@@ -178,7 +178,7 @@ public static class Debugger {
         var pending = _pendingStop;
         if (pending is not null) {
             _pendingStop = null;
-            if (pending == "breakpoint") Console.WriteLine($"[BP] Hit at ${System.PC:X4}");
+            if (pending == "breakpoint") Console.WriteLine($"[BP] Hit at ${Emulator.System.PC:X4}");
             await WriteStoppedEventAsync(pending);
             return true;
         }
@@ -222,20 +222,20 @@ public static class Debugger {
     // instruction AFTER the one that was current when the user pressed step.
     private static void StepInstruction() {
         // If mid-instruction, drain remaining cycles to reach the next boundary.
-        if (System.cycle != 0) {
-            do { StepCycle(); } while (System.cycle != 0);
+        if (Emulator.System.cycle != 0) {
+            do { StepCycle(); } while (Emulator.System.cycle != 0);
         }
         // Now at cycle==0 (instruction boundary). Execute one full instruction.
-        StepCycle();                            // cycle 0→1: fetch opcode
-        while (System.cycle != 0) StepCycle(); // remaining cycles until done
+        StepCycle();                                    // cycle 0→1: fetch opcode
+        while (Emulator.System.cycle != 0) StepCycle(); // remaining cycles until done
     }
 
     internal static async Task StepOverAsync() {
-        if (CpuPeek(System.PC) is 0x20 /* JSR abs */) {
-            var savedSp = System.Register.S;
+        if (CpuPeek(Emulator.System.PC) is 0x20 /* JSR abs */) {
+            var savedSp = Emulator.System.Register.S;
             do {
                 if (StepInstructionAndCheckBreak()) return;
-            } while (System.Register.S != savedSp);
+            } while (Emulator.System.Register.S != savedSp);
         } else {
             var startLine = _currentLineNumber;
             do {
@@ -263,9 +263,9 @@ public static class Debugger {
     }
 
     private static void StepCycle() {
-        if (System.cycle is 0) RefreshSourceLocation();
-        System.Step();
-        ++System.virtualTime;
+        if (Emulator.System.cycle is 0) RefreshSourceLocation();
+        Emulator.System.Step();
+        ++Emulator.System.virtualTime;
     }
 
     // Sync _currentRomAddress / _currentLineNumber with the current PC.
@@ -280,7 +280,7 @@ public static class Debugger {
     // _currentLineNumber unchanged so the step-until-line-changes loop in
     // StepOnceAsync keeps advancing.
     private static void RefreshSourceLocation() {
-        _currentRomAddress = Program.Cartridge.GetROMLocation(System.PC);
+        _currentRomAddress = Program.Cartridge.GetROMLocation(Emulator.System.PC);
         if (SourceCodeReferences.TryGetValue(_currentRomAddress, out var sa)) {
             if (sa.line > 0) _currentLineNumber = sa.line;
             return;
@@ -519,7 +519,7 @@ public static class Debugger {
                     w.WriteStartArray("stackFrames");
                     w.WriteStartObject();
                     w.WriteNumber("id",     1);
-                    w.WriteString("name",   $"${System.PC:X4}");
+                    w.WriteString("name",   $"${Emulator.System.PC:X4}");
                     w.WriteNumber("line",   srcLine);
                     w.WriteNumber("column", 1);
                     if (fullPath is not null) {
@@ -684,7 +684,7 @@ public static class Debugger {
                     int cpuAddr = wmStart + i;
                     // Only write to System RAM ($0000–$1FFF) — safe, no hardware side-effects.
                     if (cpuAddr is >= 0 and < 0x2000) {
-                        System.Memory.SystemRAM[cpuAddr & 0x7FF] = wmBytes[i];
+                        Emulator.System.Memory.SystemRAM[cpuAddr & 0x7FF] = wmBytes[i];
                         wmWritten++;
                     }
                 }
@@ -781,29 +781,29 @@ public static class Debugger {
 
     private static List<(string Name, string Value, string Type, int VariablesReference)> BuildRegisterVariables() {
         var p = (byte)(
-            (System.Register.n ? 1 : 0) << 7 |
-            (System.Register.v ? 1 : 0) << 6 |
-            1                           << 5 |
-            (System.Register.b ? 1 : 0) << 4 |
-            (System.Register.d ? 1 : 0) << 3 |
-            (System.Register.i ? 1 : 0) << 2 |
-            (System.Register.z ? 1 : 0) << 1 |
-            (System.Register.c ? 1 : 0) << 0
+            (Emulator.System.Register.n ? 1 : 0) << 7 |
+            (Emulator.System.Register.v ? 1 : 0) << 6 |
+            1                                    << 5 |
+            (Emulator.System.Register.b ? 1 : 0) << 4 |
+            (Emulator.System.Register.d ? 1 : 0) << 3 |
+            (Emulator.System.Register.i ? 1 : 0) << 2 |
+            (Emulator.System.Register.z ? 1 : 0) << 1 |
+            (Emulator.System.Register.c ? 1 : 0) << 0
         );
         return [
-            ("A",  $"${System.Register.AC:X2}", "byte", 0),
-            ("X",  $"${System.Register.X:X2}",  "byte", 0),
-            ("Y",  $"${System.Register.Y:X2}",  "byte", 0),
-            ("S",  $"${System.Register.S:X2}",  "byte", 0),
-            ("PC", $"${System.PC:X4}",           "word", 0),
+            ("A",  $"${Emulator.System.Register.AC:X2}", "byte", 0),
+            ("X",  $"${Emulator.System.Register.X:X2}",  "byte", 0),
+            ("Y",  $"${Emulator.System.Register.Y:X2}",  "byte", 0),
+            ("S",  $"${Emulator.System.Register.S:X2}",  "byte", 0),
+            ("PC", $"${Emulator.System.PC:X4}",           "word", 0),
             ("P",  $"${p:X2}",                  "byte", 0),
-            ("N",  System.Register.n ? "1" : "0", "bool", 0),
-            ("V",  System.Register.v ? "1" : "0", "bool", 0),
-            ("B",  System.Register.b ? "1" : "0", "bool", 0),
-            ("D",  System.Register.d ? "1" : "0", "bool", 0),
-            ("I",  System.Register.i ? "1" : "0", "bool", 0),
-            ("Z",  System.Register.z ? "1" : "0", "bool", 0),
-            ("C",  System.Register.c ? "1" : "0", "bool", 0),
+            ("N",  Emulator.System.Register.n ? "1" : "0", "bool", 0),
+            ("V",  Emulator.System.Register.v ? "1" : "0", "bool", 0),
+            ("B",  Emulator.System.Register.b ? "1" : "0", "bool", 0),
+            ("D",  Emulator.System.Register.d ? "1" : "0", "bool", 0),
+            ("I",  Emulator.System.Register.i ? "1" : "0", "bool", 0),
+            ("Z",  Emulator.System.Register.z ? "1" : "0", "bool", 0),
+            ("C",  Emulator.System.Register.c ? "1" : "0", "bool", 0),
         ];
     }
 
@@ -859,7 +859,7 @@ public static class Debugger {
 
             int addr = addrVal.Value & 0xFFFF;
             if (addr < 0x2000) {
-                System.Memory.SystemRAM[addr & 0x7FF] = (byte)(val & 0xFF);
+                Emulator.System.Memory.SystemRAM[addr & 0x7FF] = (byte)(val & 0xFF);
                 return $"cpu[${addr:X4}] = ${val & 0xFF:X2}";
             }
             return $"Cannot write to ${addr:X4} — only System RAM ($0000–$1FFF) is writable";
@@ -875,18 +875,18 @@ public static class Debugger {
     // is not recognised.
     private static string WriteRegister(string name, int value) {
         switch (name.ToUpperInvariant()) {
-            case "A":        System.Register.AC = (byte)(value & 0xFF); break;
-            case "X":        System.Register.X  = (byte)(value & 0xFF); break;
-            case "Y":        System.Register.Y  = (byte)(value & 0xFF); break;
-            case "S": case "SP": System.Register.S = (byte)(value & 0xFF); break;
-            case "PC":       System.PC = (ushort)(value & 0xFFFF); break;
-            case "N":        System.Register.n = value != 0; break;
-            case "V":        System.Register.v = value != 0; break;
-            case "B":        System.Register.b = value != 0; break;
-            case "D":        System.Register.d = value != 0; break;
-            case "I":        System.Register.i = value != 0; break;
-            case "Z":        System.Register.z = value != 0; break;
-            case "C":        System.Register.c = value != 0; break;
+            case "A":            Emulator.System.Register.AC = (byte)(value   & 0xFF); break;
+            case "X":            Emulator.System.Register.X  = (byte)(value   & 0xFF); break;
+            case "Y":            Emulator.System.Register.Y  = (byte)(value   & 0xFF); break;
+            case "S": case "SP": Emulator.System.Register.S  = (byte)(value   & 0xFF); break;
+            case "PC":           Emulator.System.PC          = (ushort)(value & 0xFFFF); break;
+            case "N":            Emulator.System.Register.n  = value != 0; break;
+            case "V":            Emulator.System.Register.v  = value != 0; break;
+            case "B":            Emulator.System.Register.b  = value != 0; break;
+            case "D":            Emulator.System.Register.d  = value != 0; break;
+            case "I":            Emulator.System.Register.i  = value != 0; break;
+            case "Z":            Emulator.System.Register.z  = value != 0; break;
+            case "C":            Emulator.System.Register.c  = value != 0; break;
             default:
                 return $"Unknown register or target '{name}'. " +
                        $"Registers: A X Y S PC  Flags: N V B D I Z C  Memory: cpu[$addr]";

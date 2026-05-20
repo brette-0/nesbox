@@ -1,6 +1,7 @@
 ﻿namespace nesbox;
 
 using EList;
+using Emulator;
 
 internal static class Program {
     internal static void Main(string[] __args) {
@@ -91,7 +92,7 @@ internal static class Program {
 
         var binds = new API.Implementation.ImplHandshake();
 
-        Implementation.Initialize(ref binds, next); if (System.Quit) {
+        Implementation.Implementation.Initialize(ref binds, next); if (System.Quit) {
             return;
         }
         

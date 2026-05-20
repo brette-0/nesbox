@@ -3,7 +3,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace nesbox.CPU;
+namespace nesbox.Emulator;
 using static System;
 using Memory = System.Memory;
 
@@ -660,6 +660,11 @@ internal static class OpCodes {
 
                 Register.v = (p & 0x40) != 0;
                 Register.n = (p & 0x80) != 0;
+
+                // RTI restores I at cycle 2 — early enough that
+                // interrupt polling on the penultimate cycle (T4)
+                // sees the restored flag.  Latch it now.
+                prevInterruptInhibit = Register.i;
 
                 break;
 
@@ -1471,8 +1476,10 @@ internal static class OpCodes {
                 Memory.CPU_Read();
                 ADH = Data;
                 PC++;
+                // Match TriCNES: addressBus = base address after high byte fetch
+                DriveAddressPins();
                 break;
-            
+
             case 3:
                 var sum = ADL + reg;
                 ADL          = (byte)sum;
@@ -1550,8 +1557,9 @@ internal static class OpCodes {
                 DriveAddressPins();
                 Memory.CPU_Read();
 
-
                 ADL = (byte)(DB + reg);
+                // Match TriCNES: addressBus = indexed zp address after dummy read
+                DriveAddressPins();
                 break;
             
             case 3:
@@ -1615,11 +1623,15 @@ internal static class OpCodes {
             case 2:
                 Address = PC;
                 Memory.CPU_Read();
-                
+
                 ADH  = Data;
                 PC++;
+                // TriCNES sets addressBus = effective address here, so
+                // DMA halt reads between cycle 2 and 3 see the correct
+                // effective address (critical for DMA + $2002/$2007 tests).
+                DriveAddressPins();
                 break;
-            
+
             case 3:
                 DriveAddressPins();
                 if (op.kind is RWKind.Write) goto complete;
@@ -1663,17 +1675,19 @@ internal static class OpCodes {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void DirectPage(Opcode op) {
         Action post = op.kind is RWKind.Read ? EndRead : EndRest;
-        
+
         switch (cycle) {
             case 1:
                 Address = PC;
                 Memory.CPU_Read();
-                
+
                 ADL = Data;
                 ADH = 0x00;
                 PC++;
+                // Match TriCNES: addressBus = zero-page address after fetch
+                DriveAddressPins();
                 break;
-            
+
             case 2:
                 DriveAddressPins();
                 if (op.kind is RWKind.Write) goto complete;
@@ -1746,6 +1760,8 @@ internal static class OpCodes {
                 Address = (byte)(DB + 1);
                 Memory.CPU_Read();
                 ADH  = Data;
+                // Match TriCNES: addressBus = base pointer after high byte fetch
+                DriveAddressPins();
                 break;
 
             case 4:
@@ -1844,8 +1860,10 @@ internal static class OpCodes {
                 Memory.CPU_Read();
 
                 ADH  = Data;
+                // Match TriCNES: addressBus = effective address after high byte fetch
+                DriveAddressPins();
                 break;
-                
+
             case 5:
                 switch (op.kind) {
                     case RWKind.RMW:

@@ -48,7 +48,7 @@ internal static class Audio {
         var spec = new SDL.AudioSpec {
             Format   = SDL.AudioFormat.AudioF32LE,
             Channels = 1,
-            Freq     = (int)System.SamplingFrequency
+            Freq     = (int)Emulator.System.SamplingFrequency
         };
 
         _stream = SDL.OpenAudioDeviceStream(
@@ -56,7 +56,7 @@ internal static class Audio {
 
         if (_stream is 0) {
             Console.WriteLine($"[Audio] Failed to open audio device: {SDL.GetError()}");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 

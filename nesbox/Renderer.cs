@@ -42,14 +42,14 @@ internal static class Renderer {
 
         if (_window is 0) {
             Console.WriteLine($"[SDL3] Create Window Failed: {SDL.GetError()}");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
         _renderer = SDL.CreateRenderer(_window, null);
         if (_renderer is 0) {
             Console.WriteLine($"[SDL3] Create Renderer Failed: {SDL.GetError()}");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
@@ -64,51 +64,28 @@ internal static class Renderer {
 
         if (_texture is 0) {
             Console.WriteLine($"[SDL3] Create Texture Failed: {SDL.GetError()}");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
         // Build the 512-entry colour LUT from the user shader. Done here
         // (renderer thread, after SDL is up) so a shader may also create
         // SDL resources later if it wants to.
-        System.PPU.Video.BuildLUT();
+        Emulator.System.PPU.Video.BuildLUT();
 
         Console.WriteLine("RENDER OUT init");
         RendererReady = true;
         Lifetime();
     }
 
-    // Gamepad handles opened on this (renderer/event) thread.
-    // IO code on the emu thread reads button state from these — thread-safe per SDL3 docs.
-    internal static nint Gamepad0;
-    internal static nint Gamepad1;
-
     private static void OnGamepadAdded(uint which) {
         var gp = SDL.OpenGamepad(which);
         if (gp is 0) return;
-        var name = SDL.GetGamepadName(gp) ?? "Unknown";
-
-        if (Gamepad0 is 0) {
-            Gamepad0 = gp;
-            Console.WriteLine($"[IO] Gamepad connected to port 0: {name}");
-        } else if (Gamepad1 is 0) {
-            Gamepad1 = gp;
-            Console.WriteLine($"[IO] Gamepad connected to port 1: {name}");
-        } else {
-            SDL.CloseGamepad(gp);
-        }
+        API.Input.InputManager.OnGamepadAdded(gp);
     }
 
     private static void OnGamepadRemoved(uint which) {
-        if (Gamepad0 is not 0 && SDL.GetGamepadID(Gamepad0) == which) {
-            Console.WriteLine("[IO] Gamepad disconnected from port 0");
-            SDL.CloseGamepad(Gamepad0);
-            Gamepad0 = 0;
-        } else if (Gamepad1 is not 0 && SDL.GetGamepadID(Gamepad1) == which) {
-            Console.WriteLine("[IO] Gamepad disconnected from port 1");
-            SDL.CloseGamepad(Gamepad1);
-            Gamepad1 = 0;
-        }
+        API.Input.InputManager.OnGamepadRemoved(which);
     }
 
     private static void Lifetime() {
@@ -146,7 +123,7 @@ internal static class Renderer {
         SDL.DestroyWindow(_window);
         Audio.Shutdown();
         SDL.Quit();
-        System.Quit = true;
+        Emulator.System.Quit = true;
     }
 
     private static void UploadAndPresent() {

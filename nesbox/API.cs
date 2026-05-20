@@ -71,7 +71,6 @@ public static class API {
             if (port2 is IClockDriven icd2) {
                 Link.Subscribe.OnTick(icd2);
             }
-            
         }
 
         public static void SetupDebug<T>(ref EList<string> args
@@ -87,14 +86,14 @@ public static class API {
                         if (args.MoveNext()) {
                             if (!int.TryParse(args.Current, out port)) {
                                 Console.WriteLine("[IMPL] Debug port is not integer");
-                                System.Quit = true;
+                                Emulator.System.Quit = true;
                             }
-                            if (System.Quit) return;
+                            if (Emulator.System.Quit) return;
                                    Console.WriteLine("[IMPL] Setting up Init"); break;
                         }
 
                         Console.WriteLine("[IMPL] No argument supplied for Debugging Port");
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         break;
 
                     case "--debugFile":
@@ -102,12 +101,12 @@ public static class API {
                             dbgFile = T.Create(args.Current);
                             Debugger.SourceRoot = Path.GetDirectoryName(
                                 Path.GetFullPath(args.Current)) ?? string.Empty;
-                            if (System.Quit) return;
+                            if (Emulator.System.Quit) return;
                             break;
                         }
                     
                         Console.WriteLine("[IMPL] No argument supplied for Debug File");
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         break;
                 
                     default:
@@ -121,12 +120,12 @@ public static class API {
             switch (dbgFile is null, port is 0) {
                 case (true, false):
                     Console.WriteLine("[IMPL] No debug file passed, cannot debug");
-                    System.Quit = true;
+                    Emulator.System.Quit = true;
                     break;
             
                 case (false, true):
                     Console.WriteLine("[IMPL] No debug port passed, cannot debug");
-                    System.Quit = true;
+                    Emulator.System.Quit = true;
                     break;
             
                 case (false, false):
@@ -170,7 +169,7 @@ public static class API {
     private static void GetFile(string fp, ref byte[] fileObject, string taskName) {
         if (Program.Threads.System is not null) {
             Console.WriteLine("[EMU] Will not read files while emulating");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
         
@@ -196,15 +195,15 @@ public static class API {
     internal static void GetCharacterROM(string fp, ref byte[] CharacterROM) => GetFile(fp, ref CharacterROM, "Character ROM");
 
     public interface IIO {
-        public byte OnRead();
-        public void SetIndex(byte index);
-        public void OnWrite();
+        public byte     OnRead();
+        public void     SetIndex(byte index);
+        public void     OnWrite();
     }
 
     public sealed class HasIRQLine {
-        public void SetIRQLine(bool assertion) => System.CPU_IRQ = assertion;
-        public void DeassertIRQ()              => System.CPU_IRQ = false;
-        public void AssertIRQ()                => System.CPU_IRQ = true;
+        public void SetIRQLine(bool assertion) => Emulator.System.CPU_IRQ = assertion;
+        public void DeassertIRQ()              => Emulator.System.CPU_IRQ = false;
+        public void AssertIRQ()                => Emulator.System.CPU_IRQ = true;
     }
 
     internal interface ICartridge {
@@ -429,5 +428,124 @@ public static class API {
             public string fp   { get; set; }
             public int    line { get; set; }
         }
+    }
+
+    public static class Input {
+        internal struct ButtonBinding {
+            internal bool IsKeyboard;
+            internal SDL.Scancode Key;
+            internal SDL.GamepadButton Button;
+        }
+
+        internal struct AxisBinding {
+            internal SDL.GamepadAxis Axis;
+        }
+
+        internal static class InputManager {
+
+            static readonly Dictionary<(byte port, int id), ButtonBinding> _buttons = new();
+            static readonly Dictionary<(byte port, int id), AxisBinding>   _axes    = new();
+
+            internal static nint[] Gamepads = [];
+
+            // --- Query (called by IO code) ---
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static bool GetButton(byte port, int id) {
+                if (!_buttons.TryGetValue((port, id), out var binding)) return false;
+
+                if (binding.IsKeyboard) {
+                    var state = SDL.GetKeyboardState(out _);
+                    return state[(int)binding.Key];
+                }
+
+                if (port >= Gamepads.Length) return false;
+                var gp = Gamepads[port];
+                return gp is not 0 && SDL.GetGamepadButton(gp, binding.Button);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static short GetAxis(byte port, int id) {
+                if (!_axes.TryGetValue((port, id), out var binding)) return 0;
+                if (port >= Gamepads.Length) return 0;
+                var gp = Gamepads[port];
+                return gp is 0 ? (short)0 : SDL.GetGamepadAxis(gp, binding.Axis);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal static byte ReduceResolution(short value, int bits) {
+                byte result = 0;
+                for (var i = 0; i < bits; i++) {
+                    result |= (byte)(((value >> (15 - i)) & 1) << (bits - 1 - i));
+                }
+                return result;
+            }
+
+            // --- Single bind ---
+
+            internal static void BindButton(byte port, int id, SDL.GamepadButton button) {
+                _buttons[(port, id)] = new ButtonBinding { IsKeyboard = false, Button = button };
+            }
+
+            internal static void BindButton(byte port, int id, SDL.Scancode key) {
+                _buttons[(port, id)] = new ButtonBinding { IsKeyboard = true, Key = key };
+            }
+
+            internal static void BindAxis(byte port, int id, SDL.GamepadAxis axis) {
+                _axes[(port, id)] = new AxisBinding { Axis = axis };
+            }
+
+            internal static void Unbind(byte port, int id) {
+                _buttons.Remove((port, id));
+                _axes.Remove((port, id));
+            }
+
+            // --- Bulk bind (array index = button/axis ID) ---
+
+            internal static void BindButtons(byte port, SDL.GamepadButton[] buttons) {
+                for (var i = 0; i < buttons.Length; i++)
+                    BindButton(port, i, buttons[i]);
+            }
+
+            internal static void BindButtons(byte port, SDL.Scancode[] keys) {
+                for (var i = 0; i < keys.Length; i++)
+                    BindButton(port, i, keys[i]);
+            }
+
+            internal static void BindAxes(byte port, SDL.GamepadAxis[] axes) {
+                for (var i = 0; i < axes.Length; i++)
+                    BindAxis(port, i, axes[i]);
+            }
+
+            // --- Gamepad handle management (called by Renderer) ---
+
+            internal static void OnGamepadAdded(nint gp) {
+                for (var i = 0; i < Gamepads.Length; i++) {
+                    if (Gamepads[i] is 0) {
+                        Gamepads[i] = gp;
+                        Console.WriteLine($"[IO] Gamepad connected to slot {i}: {SDL.GetGamepadName(gp) ?? "Unknown"}");
+                        return;
+                    }
+                }
+
+                var old = Gamepads;
+                Gamepads = new nint[old.Length + 1];
+                old.CopyTo(Gamepads, 0);
+                Gamepads[^1] = gp;
+                Console.WriteLine($"[IO] Gamepad connected to slot {Gamepads.Length - 1}: {SDL.GetGamepadName(gp) ?? "Unknown"}");
+            }
+
+            internal static void OnGamepadRemoved(uint which) {
+                for (var i = 0; i < Gamepads.Length; i++) {
+                    if (Gamepads[i] is not 0 && SDL.GetGamepadID(Gamepads[i]) == which) {
+                        Console.WriteLine($"[IO] Gamepad disconnected from slot {i}");
+                        SDL.CloseGamepad(Gamepads[i]);
+                        Gamepads[i] = 0;
+                        return;
+                    }
+                }
+            }
+        }
+
     }
 }

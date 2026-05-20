@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 using EList;
-using nesbox;
+using nesbox.Emulator;
 namespace nesbox.Mappers;
 
 internal sealed class NROM : API.INESCartridge {
@@ -12,7 +12,7 @@ internal sealed class NROM : API.INESCartridge {
                 case "--program":
                     if (!args.MoveNext()) {
                         Console.WriteLine("[CART] No Program ROM file path specified");
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         return;
                     }
 
@@ -22,7 +22,7 @@ internal sealed class NROM : API.INESCartridge {
 
                     API.GetProgramROM(args.Current, ref __ProgramROM);
                     if (ProgramROM.Length is 0) {
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         return;
                     }
                     break;
@@ -30,13 +30,13 @@ internal sealed class NROM : API.INESCartridge {
                 case "--character":
                     if (!args.MoveNext()) {
                         Console.WriteLine("[CART] No Character ROM file path specified");
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         return;
                     }
 
                     API.GetCharacterROM(args.Current, ref __CharacterROM);
                     if (CharacterROM.Length is 0) {
-                        System.Quit = true;
+                        Emulator.System.Quit = true;
                         return;
                     }
                     break;
@@ -49,32 +49,32 @@ internal sealed class NROM : API.INESCartridge {
 
         if (__ProgramROM.Length is 0) {
             Console.WriteLine("[CART] No Program ROM file path specified");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
 
         if (ProgramROM.Length > 0x8000) {
             Console.WriteLine($"[CART] Program ROM is too large");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
         if ((ProgramROM.Length & (ProgramROM.Length - 1)) is not 0) {
             Console.WriteLine($"[CART] Program ROM is illegal size");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
         if (CharacterROM.Length > 0x2000) {
             Console.WriteLine($"[CART] Character ROM is too large");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
         if ((CharacterROM.Length & (CharacterROM.Length - 1)) is not 0) {
             Console.WriteLine($"[CART] Character ROM is illegal size");
-            System.Quit = true;
+            Emulator.System.Quit = true;
             return;
         }
 
@@ -99,9 +99,9 @@ internal sealed class NROM : API.INESCartridge {
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte CPUReadByte() {
-        var addr = System.Address;
+        var addr = Emulator.System.Address;
         return addr < 0x8000
-            ? System.OpenBus
+            ? Emulator.System.OpenBus
             : ProgramROM[(addr - 0x8000) & (ProgramROM.Length - 1)];
     }
 
@@ -112,7 +112,7 @@ internal sealed class NROM : API.INESCartridge {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte ReadByte(ushort address) =>
         address < 0x8000
-            ? System.OpenBus
+            ? Emulator.System.OpenBus
             : ProgramROM[(address - 0x8000) & (ProgramROM.Length - 1)];
 
     /// <summary>
@@ -122,7 +122,7 @@ internal sealed class NROM : API.INESCartridge {
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte PPUReadByte() {
-        var addr = System.PPU.Registers.Address;
+        var addr = Emulator.System.PPU.Registers.Address;
         if (CharacterROM.Length is 0) return 0;   // no CHR-ROM, bus floats — open-bus stub
         return CharacterROM[addr & (CharacterROM.Length - 1)];
     }

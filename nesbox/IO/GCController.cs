@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using SDL3;
-
+using nesbox.Emulator;
 namespace nesbox.IO;
 
 /*
@@ -19,7 +19,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             switch (_modeSelect) {
                 case ModeSelect.Report:
                     _shift >>= 1;
-                    _shift |= System.IOAssertion ? 0x01 : (ulong)0x00;
+                    _shift |=  Emulator.System.IOAssertion ? 0x01 : (ulong)0x00;
                     if (--_taskLength is 0) {
                         _taskLatch   = false;
                     }
@@ -29,7 +29,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
 
                 case ModeSelect.Behavior:
                     _pollingModeBuffer <<= 1;
-                    _pollingModeBuffer |=  (byte)(System.IOAssertion ? 0x01 : 0x00);
+                    _pollingModeBuffer |=  (byte)(Emulator.System.IOAssertion ? 0x01 : 0x00);
                     if (--_taskLength is not 0) return 0;
                     _pollingMode = (PollingMode)_pollingModeBuffer;
                     _taskLatch   = false;
@@ -57,7 +57,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
             }
         }
 
-        if (System.IOAssertion) {
+        if (Emulator.System.IOAssertion) {
             _modeSelect = (ModeSelect)((int)++_modeSelect % (int)ModeSelect.End);
         } else if (_modeSelect is ModeSelect.Legacy) {
             // TODO: return bit            
@@ -125,7 +125,7 @@ internal sealed class GCController : API.IIO, API.IClockDriven {
 
         ulong report = 0;
         
-        var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
+        var gp = _port < API.Input.InputManager.Gamepads.Length ? API.Input.InputManager.Gamepads[_port] : 0;
         if (gp is 0) { _shift = 0; _taskLength = 0; return; }
         
         if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))                 report |= 0x001; // B

@@ -1,8 +1,7 @@
 using System.Runtime.CompilerServices;
 
 namespace nesbox.IO;
-
-using SDL3;
+using Emulator;
 
 // ============================================================================
 //  Standard NES/Famicom Controller — SDL3 Gamepad Implementation
@@ -46,21 +45,26 @@ public class StandardController_NTSCU : API.IIO {
     
     public void SetIndex(byte Index) => _port = Index;
     public void OnWrite() {
-        var gp = _port is 0 ? Renderer.Gamepad0 : Renderer.Gamepad1;
-
         if (System.IOAssertion) {
             _shift = 0;
-            if (gp is not 0) {
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.South))     _shift |= 0x01;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.West))      _shift |= 0x02;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Back))      _shift |= 0x04;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.Start))     _shift |= 0x08;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadUp))    _shift |= 0x10;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadDown))  _shift |= 0x20;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadLeft))  _shift |= 0x40;
-                if (SDL.GetGamepadButton(gp, SDL.GamepadButton.DPadRight)) _shift |= 0x80;
-            }
+            if (API.Input.InputManager.GetButton(_port, 0)) _shift |= 0x01;
+            if (API.Input.InputManager.GetButton(_port, 1)) _shift |= 0x02;
+            if (API.Input.InputManager.GetButton(_port, 2)) _shift |= 0x04;
+            if (API.Input.InputManager.GetButton(_port, 3)) _shift |= 0x08;
+            if (API.Input.InputManager.GetButton(_port, 4)) _shift |= 0x10;
+            if (API.Input.InputManager.GetButton(_port, 5)) _shift |= 0x20;
+            if (API.Input.InputManager.GetButton(_port, 6)) _shift |= 0x40;
+            if (API.Input.InputManager.GetButton(_port, 7)) _shift |= 0x80;
             _readCount = 0;
+        }
+
+        // no dual inputs (we should make this a feature somehow, not sure)
+        if ((_shift & 0xc0) is 0xc0) {
+            _shift ^= 0xc0;
+        }
+        
+        if ((_shift & 0x30) is 0x30) {
+            _shift ^= 0x30;
         }
     }
 
